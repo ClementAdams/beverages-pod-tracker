@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: beverage-pod-tracker
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/pods
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: NODE_ENV
+        value: production

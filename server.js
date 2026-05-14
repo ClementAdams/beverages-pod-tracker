@@ -12,6 +12,13 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// Serve frontend
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/PODTracker.jsx', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(path.join(__dirname, 'PODTracker.jsx'));
+});
+
 // UBC can volumes database
 const UBC_CANS = [
   { ml: 500, label: '500ml' },
@@ -95,6 +102,7 @@ app.post('/api/collection-note', (req, res) => {
     };
 
     collectionNotes.set(noteId, collectionData);
+    pod.noteId = noteId;
     res.json({ success: true, noteId, collectionData });
   } catch (error) {
     res.status(400).json({ error: error.message });
