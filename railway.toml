@@ -3,6 +3,6 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "node server.js"
-healthcheckPath = "/api/pods"
-healthcheckTimeout = 30
+healthcheckPath = "/api/version"
+healthcheckTimeout = 60
 restartPolicyType = "on_failure"
