@@ -244,8 +244,10 @@ app.post('/api/collection-note', async (req, res) => {
 
     res.json({ success: true, noteId });
 
-    const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
-    sendCollectionEmail(note, photoFiles).catch(err => console.error('Email failed:', err.message));
+    setTimeout(() => {
+      const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
+      sendCollectionEmail(note, photoFiles).catch(err => console.error('Email failed:', err.message));
+    }, 100);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
@@ -263,6 +265,8 @@ app.get('/api/collection-note/:noteId/pdf', async (req, res) => {
 app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.SMTP_HOST });
 });
+
+app.get('/api/version', (req, res) => res.json({ version: 4 }));
 
 // ─── Start ────────────────────────────────────────────────────
 
