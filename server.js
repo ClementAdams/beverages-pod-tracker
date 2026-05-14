@@ -173,8 +173,10 @@ async function sendCollectionEmail(note, photoFiles) {
     }
   });
 
-  const recipients = [process.env.SMTP_FROM];
+  const recipients = [];
   if (note.accountantEmail) recipients.push(note.accountantEmail);
+  const alwaysCC = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (alwaysCC && !recipients.includes(alwaysCC)) recipients.push(alwaysCC);
 
   const results = [];
   for (const to of recipients) {
@@ -266,7 +268,7 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.SMTP_HOST });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 4 }));
+app.get('/api/version', (req, res) => res.json({ version: 5 }));
 
 // ─── Start ────────────────────────────────────────────────────
 
