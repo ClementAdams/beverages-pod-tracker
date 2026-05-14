@@ -7,6 +7,7 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const { Resend } = require('resend');
 const { v4: uuidv4 } = require('uuid');
+const mongoose = require('mongoose');
 
 const app = express();
 
@@ -31,15 +32,40 @@ app.get('/PODTracker.jsx', (req, res) => {
   res.sendFile(path.join(__dirname, 'PODTracker.jsx'));
 });
 
-// ─── JSON File Database ───────────────────────────────────────
+// ─── MongoDB ─────────────────────────────────────────────────
 
-const DATA_DIR = path.join(__dirname, 'data');
-const PODS_FILE = path.join(DATA_DIR, 'pods.json');
-const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/pod-tracker')
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err.message));
 
-function readJSON(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return []; } }
-function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
+const podSchema = new mongoose.Schema({
+  podId: { type: String, default: () => uuidv4(), unique: true },
+  gtr: String,
+  sct: String,
+  dateShipped: String,
+  receivedDate: String,
+  receivedBy: String,
+  pallets: Number,
+  totalLitres: Number,
+  photo: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+const noteSchema = new mongoose.Schema({
+  noteId: { type: String, default: () => uuidv4(), unique: true },
+  pods: [mongoose.Schema.Types.Mixed],
+  driverName: String,
+  vehicleInfo: String,
+  farmDestination: String,
+  accountantEmail: String,
+  driverSignature: String,
+  periodStart: String,
+  periodEnd: String,
+  createdDate: { type: Date, default: Date.now }
+});
+
+const Pod = mongoose.model('Pod', podSchema);
+const Note = mongoose.model('Note', noteSchema);
 
 // ─── Email ────────────────────────────────────────────────────
 
@@ -195,10 +221,9 @@ async function sendCollectionEmail(note, photoFiles) {
 // ─── Routes ───────────────────────────────────────────────────
 
 // Log a single POD (with optional photo)
-app.post('/api/pod', upload.single('photo'), (req, res) => {
+app.post('/api/pod', upload.single('photo'), async (req, res) => {
   try {
-    const pod = {
-      podId: uuidv4(),
+    const pod = await Pod.create({
       gtr: req.body.gtr || '',
       sct: req.body.sct || '',
       dateShipped: req.body.dateShipped || '',
@@ -206,21 +231,19 @@ app.post('/api/pod', upload.single('photo'), (req, res) => {
       receivedBy: req.body.receivedBy || '',
       pallets: parseInt(req.body.pallets) || 0,
       totalLitres: parseFloat(req.body.totalLitres) || 0,
-      photo: req.file ? `uploads/${req.file.filename}` : null,
-      createdAt: new Date().toISOString()
-    };
-    const pods = readJSON(PODS_FILE);
-    pods.push(pod);
-    writeJSON(PODS_FILE, pods);
+      photo: req.file ? `uploads/${req.file.filename}` : null
+    });
     res.json({ success: true, pod });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.get('/api/pods', (req, res) => res.json(readJSON(PODS_FILE).reverse()));
+app.get('/api/pods', async (req, res) => {
+  const pods = await Pod.find().sort({ createdAt: -1 }).lean();
+  res.json(pods);
+});
 
-app.delete('/api/pod/:podId', (req, res) => {
-  const pods = readJSON(PODS_FILE).filter(p => p.podId !== req.params.podId);
-  writeJSON(PODS_FILE, pods);
+app.delete('/api/pod/:podId', async (req, res) => {
+  await Pod.deleteOne({ podId: req.params.podId });
   res.json({ success: true });
 });
 
@@ -229,34 +252,30 @@ app.post('/api/collection-note', async (req, res) => {
   try {
     const { podIds, driverName, vehicleInfo, farmDestination, accountantEmail,
             driverSignature, periodStart, periodEnd } = req.body;
-    const allPods = readJSON(PODS_FILE);
-    const selectedPods = allPods.filter(p => podIds.includes(p.podId));
+    const selectedPods = await Pod.find({ podId: { $in: podIds } }).lean();
     if (selectedPods.length === 0) return res.status(400).json({ error: 'No PODs selected' });
 
-    const noteId = uuidv4();
-    const note = {
-      noteId, pods: selectedPods, driverName, vehicleInfo, farmDestination,
-      accountantEmail, driverSignature, periodStart, periodEnd,
-      createdDate: new Date().toISOString()
-    };
+    const note = await Note.create({
+      pods: selectedPods, driverName, vehicleInfo, farmDestination,
+      accountantEmail, driverSignature, periodStart, periodEnd
+    });
 
-    const notes = readJSON(NOTES_FILE);
-    notes.push(note);
-    writeJSON(NOTES_FILE, notes);
-
-    res.json({ success: true, noteId });
+    res.json({ success: true, noteId: note.noteId });
 
     setTimeout(() => {
       const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
-      sendCollectionEmail(note, photoFiles).catch(err => console.error('Email failed:', err.message));
+      sendCollectionEmail(note.toObject(), photoFiles).catch(err => console.error('Email failed:', err.message));
     }, 100);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.get('/api/collection-notes', (req, res) => res.json(readJSON(NOTES_FILE).reverse()));
+app.get('/api/collection-notes', async (req, res) => {
+  const notes = await Note.find().sort({ createdDate: -1 }).lean();
+  res.json(notes);
+});
 
 app.get('/api/collection-note/:noteId/pdf', async (req, res) => {
-  const note = readJSON(NOTES_FILE).find(n => n.noteId === req.params.noteId);
+  const note = await Note.findOne({ noteId: req.params.noteId }).lean();
   if (!note) return res.status(404).json({ error: 'Not found' });
   const pdfBuffer = await generateCollectionPDF(note);
   res.setHeader('Content-Type', 'application/pdf');
@@ -268,7 +287,7 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.RESEND_API_KEY });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 8 }));
+app.get('/api/version', (req, res) => res.json({ version: 9 }));
 
 app.get('/api/test-email', async (req, res) => {
   try {
