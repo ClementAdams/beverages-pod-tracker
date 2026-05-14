@@ -44,12 +44,15 @@ function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, nul
 // ─── Email ────────────────────────────────────────────────────
 
 function createTransporter() {
-  if (!process.env.SMTP_HOST) return null;
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587'),
     secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
   });
 }
 
@@ -239,10 +242,10 @@ app.post('/api/collection-note', async (req, res) => {
     notes.push(note);
     writeJSON(NOTES_FILE, notes);
 
-    const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
-    const emailResult = await sendCollectionEmail(note, photoFiles);
+    res.json({ success: true, noteId });
 
-    res.json({ success: true, noteId, emailResult });
+    const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
+    sendCollectionEmail(note, photoFiles).catch(err => console.error('Email failed:', err.message));
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
