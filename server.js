@@ -270,7 +270,23 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.SMTP_HOST });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 6 }));
+app.get('/api/version', (req, res) => res.json({ version: 7 }));
+
+app.get('/api/test-email', async (req, res) => {
+  try {
+    const transporter = createTransporter();
+    if (!transporter) return res.json({ error: 'No SMTP config', env: { host: process.env.SMTP_HOST, port: process.env.SMTP_PORT, user: process.env.SMTP_USER ? 'SET' : 'MISSING', pass: process.env.SMTP_PASS ? 'SET' : 'MISSING' } });
+    const result = await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: process.env.SMTP_FROM || process.env.SMTP_USER,
+      subject: 'Railway email test',
+      text: 'If you see this, email works from Railway.'
+    });
+    res.json({ success: true, response: result.response });
+  } catch (err) {
+    res.json({ success: false, error: err.message, code: err.code });
+  }
+});
 
 // ─── Start ────────────────────────────────────────────────────
 
