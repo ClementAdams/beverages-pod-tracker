@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+const { useState, useEffect } = React;
 
 const API = '';
 
-export default function PODTracker() {
+function PODTracker() {
   const [currentStep, setCurrentStep] = useState('dashboard');
   const [pods, setPods] = useState([]);
   const [selectedPod, setSelectedPod] = useState(null);
@@ -15,7 +15,9 @@ export default function PODTracker() {
     items: [],
     driverName: '',
     vehicleInfo: '',
-    farmDestination: ''
+    farmDestination: '',
+    accountantEmail: '',
+    clientEmail: ''
   });
   const [ubcCans, setUbcCans] = useState([]);
   const [currentItem, setCurrentItem] = useState({
@@ -77,7 +79,7 @@ export default function PODTracker() {
   };
 
   const resetForm = () => {
-    setFormData({ gtr: '', sct: '', dateShipped: '', items: [], driverName: '', vehicleInfo: '', farmDestination: '' });
+    setFormData({ gtr: '', sct: '', dateShipped: '', items: [], driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', clientEmail: '' });
     setCurrentItem({ itemCode: '', description: '', volumeMl: 500, quantity: 0, pallets: 0 });
     setTotals({ qty: 0, litres: 0 });
   };
@@ -108,7 +110,9 @@ export default function PODTracker() {
           podId,
           driverName: formData.driverName,
           vehicleInfo: formData.vehicleInfo,
-          farmDestination: formData.farmDestination
+          farmDestination: formData.farmDestination,
+          accountantEmail: formData.accountantEmail,
+          clientEmail: formData.clientEmail
         })
       });
 
@@ -301,6 +305,16 @@ export default function PODTracker() {
               <label style={styles.label}>Farm Destination</label>
               <input type="text" placeholder="Farm name / location" value={formData.farmDestination}
                 onChange={(e) => setFormData({ ...formData, farmDestination: e.target.value })} style={styles.input} />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Accountant Email</label>
+              <input type="email" placeholder="accountant@example.com" value={formData.accountantEmail}
+                onChange={(e) => setFormData({ ...formData, accountantEmail: e.target.value })} style={styles.input} />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Client / Farm Email</label>
+              <input type="email" placeholder="client@example.com" value={formData.clientEmail}
+                onChange={(e) => setFormData({ ...formData, clientEmail: e.target.value })} style={styles.input} />
             </div>
           </div>
 
