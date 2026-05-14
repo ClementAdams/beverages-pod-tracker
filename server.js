@@ -5,7 +5,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -43,18 +43,10 @@ function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, nul
 
 // ─── Email ────────────────────────────────────────────────────
 
-function createTransporter() {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
-  const port = parseInt(process.env.SMTP_PORT || '465');
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000
-  });
+function getResend() {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  return new Resend(key);
 }
 
 function generateCollectionPDF(note) {
@@ -146,8 +138,8 @@ function generateCollectionPDF(note) {
 }
 
 async function sendCollectionEmail(note, photoFiles) {
-  const transporter = createTransporter();
-  if (!transporter) return { sent: false, reason: 'Email not configured' };
+  const resend = getResend();
+  if (!resend) { console.log('No RESEND_API_KEY set'); return { sent: false, reason: 'Email not configured' }; }
 
   const pdfBuffer = await generateCollectionPDF(note);
   const totalPallets = note.pods.reduce((s, p) => s + (p.pallets || 0), 0);
@@ -161,33 +153,39 @@ async function sendCollectionEmail(note, photoFiles) {
     <p>Collection note PDF and POD photos attached.</p>`;
 
   const attachments = [
-    { filename: `collection-note-${note.noteId}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }
+    { filename: `collection-note-${note.noteId}.pdf`, content: pdfBuffer.toString('base64') }
   ];
 
   photoFiles.forEach((photo, i) => {
     const filePath = path.join(__dirname, photo);
     if (fs.existsSync(filePath)) {
+      const fileContent = fs.readFileSync(filePath);
       attachments.push({
         filename: `POD-photo-${i + 1}${path.extname(photo)}`,
-        path: filePath
+        content: fileContent.toString('base64')
       });
     }
   });
 
   const recipients = [];
   if (note.accountantEmail) recipients.push(note.accountantEmail);
-  const alwaysCC = process.env.SMTP_FROM || process.env.SMTP_USER;
-  if (alwaysCC && !recipients.includes(alwaysCC)) recipients.push(alwaysCC);
+  const alwaysCC = process.env.EMAIL_CC || 'ch1wasteservice@gmail.com';
+  if (!recipients.includes(alwaysCC)) recipients.push(alwaysCC);
+
+  const fromAddr = process.env.EMAIL_FROM || 'POD Tracker <onboarding@resend.dev>';
 
   const results = [];
   for (const to of recipients) {
     try {
-      await transporter.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to, subject: `Collection Note - ${note.periodStart} to ${note.periodEnd}`,
-        html, attachments
+      const { data, error } = await resend.emails.send({
+        from: fromAddr,
+        to,
+        subject: `Collection Note - ${note.periodStart} to ${note.periodEnd}`,
+        html,
+        attachments
       });
-      console.log('Email sent to:', to);
+      if (error) throw new Error(error.message);
+      console.log('Email sent to:', to, data);
       results.push({ to, sent: true });
     } catch (err) { console.error('Email failed to', to, ':', err.message); results.push({ to, sent: false, error: err.message }); }
   }
@@ -267,24 +265,25 @@ app.get('/api/collection-note/:noteId/pdf', async (req, res) => {
 });
 
 app.get('/api/email/status', (req, res) => {
-  res.json({ configured: !!process.env.SMTP_HOST });
+  res.json({ configured: !!process.env.RESEND_API_KEY });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 7 }));
+app.get('/api/version', (req, res) => res.json({ version: 8 }));
 
 app.get('/api/test-email', async (req, res) => {
   try {
-    const transporter = createTransporter();
-    if (!transporter) return res.json({ error: 'No SMTP config', env: { host: process.env.SMTP_HOST, port: process.env.SMTP_PORT, user: process.env.SMTP_USER ? 'SET' : 'MISSING', pass: process.env.SMTP_PASS ? 'SET' : 'MISSING' } });
-    const result = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: process.env.SMTP_FROM || process.env.SMTP_USER,
-      subject: 'Railway email test',
-      text: 'If you see this, email works from Railway.'
+    const resend = getResend();
+    if (!resend) return res.json({ error: 'No RESEND_API_KEY set' });
+    const { data, error } = await resend.emails.send({
+      from: process.env.EMAIL_FROM || 'POD Tracker <onboarding@resend.dev>',
+      to: 'ch1wasteservice@gmail.com',
+      subject: 'Railway email test via Resend',
+      text: 'If you see this, email works from Railway via Resend API.'
     });
-    res.json({ success: true, response: result.response });
+    if (error) return res.json({ success: false, error });
+    res.json({ success: true, data });
   } catch (err) {
-    res.json({ success: false, error: err.message, code: err.code });
+    res.json({ success: false, error: err.message });
   }
 });
 
