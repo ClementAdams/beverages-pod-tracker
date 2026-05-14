@@ -9,7 +9,11 @@ const { Resend } = require('resend');
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
 
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
 const app = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'pod-tracker-secret-key-change-in-production';
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -66,8 +70,41 @@ const noteSchema = new mongoose.Schema({
   createdDate: { type: Date, default: Date.now }
 });
 
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ['admin', 'crew'], default: 'crew' },
+  createdAt: { type: Date, default: Date.now }
+});
+
 const Pod = mongoose.model('Pod', podSchema);
 const Note = mongoose.model('Note', noteSchema);
+const User = mongoose.model('User', userSchema);
+
+// Create default admin if none exists
+mongoose.connection.once('open', async () => {
+  const count = await User.countDocuments();
+  if (count === 0) {
+    const hash = await bcrypt.hash('admin123', 10);
+    await User.create({ username: 'admin', password: hash, role: 'admin' });
+    console.log('Default admin created: admin / admin123');
+  }
+});
+
+// Auth middleware
+function auth(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch { return res.status(401).json({ error: 'Invalid token' }); }
+}
+
+function adminOnly(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  next();
+}
 
 // ─── Email ────────────────────────────────────────────────────
 
@@ -220,10 +257,103 @@ async function sendCollectionEmail(note, photoFiles) {
   return results;
 }
 
+// ─── Auth Routes ─────────────────────────────────────────────
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+    if (!user || !(await bcrypt.compare(password, user.password)))
+      return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign({ id: user._id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, user: { username: user.username, role: user.role } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/users', auth, adminOnly, async (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+    const hash = await bcrypt.hash(password, 10);
+    await User.create({ username, password: hash, role: role || 'crew' });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.get('/api/users', auth, adminOnly, async (req, res) => {
+  const users = await User.find().select('-password').lean();
+  res.json(users);
+});
+
+app.delete('/api/users/:id', auth, adminOnly, async (req, res) => {
+  await User.deleteOne({ _id: req.params.id });
+  res.json({ success: true });
+});
+
 // ─── Routes ───────────────────────────────────────────────────
 
+// Dashboard stats
+app.get('/api/stats', auth, async (req, res) => {
+  const activePods = await Pod.countDocuments({ archived: { $ne: true } });
+  const archivedPods = await Pod.countDocuments({ archived: true });
+  const totalNotes = await Note.countDocuments();
+  const activeAgg = await Pod.aggregate([
+    { $match: { archived: { $ne: true } } },
+    { $group: { _id: null, pallets: { $sum: '$pallets' }, litres: { $sum: '$totalLitres' } } }
+  ]);
+  const allAgg = await Pod.aggregate([
+    { $group: { _id: null, pallets: { $sum: '$pallets' }, litres: { $sum: '$totalLitres' } } }
+  ]);
+  res.json({
+    activePods, archivedPods, totalNotes,
+    activePallets: activeAgg[0]?.pallets || 0, activeLitres: activeAgg[0]?.litres || 0,
+    totalPallets: allAgg[0]?.pallets || 0, totalLitres: allAgg[0]?.litres || 0
+  });
+});
+
+// Search PODs
+app.get('/api/pods/search', auth, async (req, res) => {
+  const { q, from, to } = req.query;
+  const filter = {};
+  if (q) {
+    const regex = new RegExp(q, 'i');
+    filter.$or = [{ gtr: regex }, { sct: regex }, { receivedBy: regex }];
+  }
+  if (from || to) {
+    filter.receivedDate = {};
+    if (from) filter.receivedDate.$gte = from;
+    if (to) filter.receivedDate.$lte = to;
+  }
+  const pods = await Pod.find(filter).sort({ createdAt: -1 }).lean();
+  res.json(pods);
+});
+
+// Export PODs as CSV
+app.get('/api/pods/export', auth,  async (req, res) => {
+  const filter = req.query.archived === 'true' ? { archived: true } : {};
+  const pods = await Pod.find(filter).sort({ createdAt: -1 }).lean();
+  const header = 'GTR,SCT,Date Shipped,Date Received,Received By,Pallets,Total Litres,Archived\n';
+  const rows = pods.map(p => `"${p.gtr}","${p.sct}","${p.dateShipped}","${p.receivedDate}","${p.receivedBy}",${p.pallets},${p.totalLitres},${p.archived || false}`).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="pods-export.csv"');
+  res.send(header + rows);
+});
+
+// Export collection notes as CSV
+app.get('/api/collection-notes/export', auth, async (req, res) => {
+  const notes = await Note.find().sort({ createdDate: -1 }).lean();
+  const header = 'Note ID,Period Start,Period End,Driver,Farm,PODs Count,Total Pallets,Total Litres,Created\n';
+  const rows = notes.map(n => {
+    const tp = n.pods.reduce((s, p) => s + (p.pallets || 0), 0);
+    const tl = n.pods.reduce((s, p) => s + (p.totalLitres || 0), 0);
+    return `"${n.noteId}","${n.periodStart}","${n.periodEnd}","${n.driverName}","${n.farmDestination || ''}",${n.pods.length},${tp},${tl.toFixed(2)},"${n.createdDate}"`;
+  }).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="collection-notes-export.csv"');
+  res.send(header + rows);
+});
+
 // Log a single POD (with optional photo)
-app.post('/api/pod', upload.single('photo'), async (req, res) => {
+app.post('/api/pod', auth, upload.single('photo'), async (req, res) => {
   try {
     const pod = await Pod.create({
       gtr: req.body.gtr || '',
@@ -239,19 +369,37 @@ app.post('/api/pod', upload.single('photo'), async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.get('/api/pods', async (req, res) => {
+app.get('/api/pods', auth, async (req, res) => {
   const filter = req.query.archived === 'true' ? { archived: true } : { archived: { $ne: true } };
   const pods = await Pod.find(filter).sort({ createdAt: -1 }).lean();
   res.json(pods);
 });
 
-app.delete('/api/pod/:podId', async (req, res) => {
+app.put('/api/pod/:podId', auth, upload.single('photo'), async (req, res) => {
+  try {
+    const update = {
+      gtr: req.body.gtr || '',
+      sct: req.body.sct || '',
+      dateShipped: req.body.dateShipped || '',
+      receivedDate: req.body.receivedDate || '',
+      receivedBy: req.body.receivedBy || '',
+      pallets: parseInt(req.body.pallets) || 0,
+      totalLitres: parseFloat(req.body.totalLitres) || 0
+    };
+    if (req.file) update.photo = `uploads/${req.file.filename}`;
+    const pod = await Pod.findOneAndUpdate({ podId: req.params.podId }, update, { new: true }).lean();
+    if (!pod) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, pod });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/api/pod/:podId', auth, async (req, res) => {
   await Pod.deleteOne({ podId: req.params.podId });
   res.json({ success: true });
 });
 
 // Create collection note from selected PODs
-app.post('/api/collection-note', async (req, res) => {
+app.post('/api/collection-note', auth, async (req, res) => {
   try {
     const { podIds, driverName, vehicleInfo, farmDestination, accountantEmail,
             driverSignature, periodStart, periodEnd } = req.body;
@@ -274,12 +422,12 @@ app.post('/api/collection-note', async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.get('/api/collection-notes', async (req, res) => {
+app.get('/api/collection-notes', auth, async (req, res) => {
   const notes = await Note.find().sort({ createdDate: -1 }).lean();
   res.json(notes);
 });
 
-app.get('/api/collection-note/:noteId/pdf', async (req, res) => {
+app.get('/api/collection-note/:noteId/pdf', auth, async (req, res) => {
   const note = await Note.findOne({ noteId: req.params.noteId }).lean();
   if (!note) return res.status(404).json({ error: 'Not found' });
   const pdfBuffer = await generateCollectionPDF(note);
@@ -288,11 +436,23 @@ app.get('/api/collection-note/:noteId/pdf', async (req, res) => {
   res.send(pdfBuffer);
 });
 
+// Resend collection note email
+app.post('/api/collection-note/:noteId/resend', auth, async (req, res) => {
+  try {
+    const note = await Note.findOne({ noteId: req.params.noteId }).lean();
+    if (!note) return res.status(404).json({ error: 'Not found' });
+    if (req.body.accountantEmail) note.accountantEmail = req.body.accountantEmail;
+    const photoFiles = note.pods.map(p => p.photo).filter(Boolean);
+    const results = await sendCollectionEmail(note, photoFiles);
+    res.json({ success: true, results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.RESEND_API_KEY });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 10 }));
+app.get('/api/version', (req, res) => res.json({ version: 11 }));
 
 app.get('/api/test-email', async (req, res) => {
   try {
