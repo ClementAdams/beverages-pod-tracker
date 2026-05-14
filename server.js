@@ -48,6 +48,8 @@ const podSchema = new mongoose.Schema({
   pallets: Number,
   totalLitres: Number,
   photo: String,
+  archived: { type: Boolean, default: false },
+  collectionNoteId: String,
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -238,7 +240,8 @@ app.post('/api/pod', upload.single('photo'), async (req, res) => {
 });
 
 app.get('/api/pods', async (req, res) => {
-  const pods = await Pod.find().sort({ createdAt: -1 }).lean();
+  const filter = req.query.archived === 'true' ? { archived: true } : { archived: { $ne: true } };
+  const pods = await Pod.find(filter).sort({ createdAt: -1 }).lean();
   res.json(pods);
 });
 
@@ -259,6 +262,8 @@ app.post('/api/collection-note', async (req, res) => {
       pods: selectedPods, driverName, vehicleInfo, farmDestination,
       accountantEmail, driverSignature, periodStart, periodEnd
     });
+
+    await Pod.updateMany({ podId: { $in: podIds } }, { archived: true, collectionNoteId: note.noteId });
 
     res.json({ success: true, noteId: note.noteId });
 
@@ -287,7 +292,7 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.RESEND_API_KEY });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 9 }));
+app.get('/api/version', (req, res) => res.json({ version: 10 }));
 
 app.get('/api/test-email', async (req, res) => {
   try {

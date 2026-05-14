@@ -32,10 +32,12 @@ function PODTracker() {
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => { loadPods(); loadNotes(); }, []);
 
   const loadPods = () => fetch('/api/pods').then(r => r.json()).then(setPods).catch(() => {});
+  const loadArchivedPods = () => fetch('/api/pods?archived=true').then(r => r.json()).then(setPods).catch(() => {});
   const loadNotes = () => fetch('/api/collection-notes').then(r => r.json()).then(setNotes).catch(() => {});
   const flash = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); };
 
@@ -109,8 +111,9 @@ function PODTracker() {
       setSelectedPodIds([]);
       setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
       setSignature(null);
+      await loadPods();
       await loadNotes();
-      flash('Collection Note created and emailed!');
+      flash('Collection Note created and emailed! PODs have been archived.');
       setView('dashboard');
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -133,8 +136,14 @@ function PODTracker() {
 
       {view === 'dashboard' && (
         <div style={S.card}>
-          <div style={S.row}><h2 style={S.heading}>Logged PODs ({pods.length})</h2><button style={S.btnSm} onClick={loadPods}>Refresh</button></div>
-          {pods.length === 0 ? <p style={S.muted}>No PODs logged yet. Tap "Log POD" to start.</p> : (
+          <div style={S.row}>
+            <h2 style={S.heading}>{showArchived ? 'Archived' : 'Active'} PODs ({pods.length})</h2>
+            <div style={{display:'flex',gap:8}}>
+              <button style={S.btnSm} onClick={() => { const next = !showArchived; setShowArchived(next); next ? loadArchivedPods() : loadPods(); }}>{showArchived ? 'Show Active' : 'Show Archived'}</button>
+              <button style={S.btnSm} onClick={showArchived ? loadArchivedPods : loadPods}>Refresh</button>
+            </div>
+          </div>
+          {pods.length === 0 ? <p style={S.muted}>{showArchived ? 'No archived PODs.' : 'No PODs logged yet. Tap "Log POD" to start.'}</p> : (
             <div style={S.tableWrap}><table style={S.table}>
               <thead><tr style={S.thead}>
                 <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th><th style={S.th}>Litres</th><th style={S.th}>Photo</th><th style={S.th}></th>
