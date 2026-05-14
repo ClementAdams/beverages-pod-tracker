@@ -45,10 +45,11 @@ function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, nul
 
 function createTransporter() {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
+  const port = parseInt(process.env.SMTP_PORT || '465');
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
+    port,
+    secure: port === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     connectionTimeout: 10000,
     greetingTimeout: 10000,
@@ -186,8 +187,9 @@ async function sendCollectionEmail(note, photoFiles) {
         to, subject: `Collection Note - ${note.periodStart} to ${note.periodEnd}`,
         html, attachments
       });
+      console.log('Email sent to:', to);
       results.push({ to, sent: true });
-    } catch (err) { results.push({ to, sent: false, error: err.message }); }
+    } catch (err) { console.error('Email failed to', to, ':', err.message); results.push({ to, sent: false, error: err.message }); }
   }
   return results;
 }
@@ -268,7 +270,7 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.SMTP_HOST });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 5 }));
+app.get('/api/version', (req, res) => res.json({ version: 6 }));
 
 // ─── Start ────────────────────────────────────────────────────
 
