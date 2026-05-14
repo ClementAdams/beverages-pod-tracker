@@ -1,444 +1,379 @@
-const { useState, useEffect } = React;
-
-const API = '';
+const { useState, useEffect, useRef } = React;
 
 function PODTracker() {
-  const [currentStep, setCurrentStep] = useState('dashboard');
+  const [view, setView] = useState('dashboard');
   const [pods, setPods] = useState([]);
-  const [selectedPod, setSelectedPod] = useState(null);
+  const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [formData, setFormData] = useState({
-    gtr: '',
-    sct: '',
-    dateShipped: '',
-    items: [],
-    driverName: '',
-    vehicleInfo: '',
-    farmDestination: '',
-    accountantEmail: '',
-    clientEmail: ''
-  });
-  const [ubcCans, setUbcCans] = useState([]);
-  const [currentItem, setCurrentItem] = useState({
-    itemCode: '',
-    description: '',
-    volumeMl: 500,
-    quantity: 0,
-    pallets: 0
-  });
-  const [totals, setTotals] = useState({ qty: 0, litres: 0 });
+  const [success, setSuccess] = useState(null);
 
-  useEffect(() => {
-    loadPods();
-    fetch(`${API}/api/ubc-cans`)
-      .then(r => r.json())
-      .then(setUbcCans)
-      .catch(() => setUbcCans([
-        { ml: 500, label: '500ml' }, { ml: 473, label: '473ml (US)' },
-        { ml: 440, label: '440ml' }, { ml: 375, label: '375ml' },
-        { ml: 355, label: '355ml' }, { ml: 330, label: '330ml' },
-        { ml: 250, label: '250ml' }, { ml: 200, label: '200ml' }
-      ]));
-  }, []);
+  // POD form
+  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+  const [podPhoto, setPodPhoto] = useState(null);
+  const fileRef = useRef(null);
 
-  const loadPods = async () => {
-    try {
-      const res = await fetch(`${API}/api/pods`);
-      const data = await res.json();
-      setPods(data);
-    } catch {
-      setError('Could not load PODs from server.');
-    }
-  };
+  // Collection note form
+  const [selectedPodIds, setSelectedPodIds] = useState([]);
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+  const [signature, setSignature] = useState(null);
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
 
-  const calculateTotals = (items) => {
-    let qty = 0, litres = 0;
-    items.forEach(item => {
-      qty += item.quantity;
-      litres += (item.quantity * item.volumeMl) / 1000;
-    });
-    setTotals({ qty, litres: Math.round(litres * 100) / 100 });
-  };
+  useEffect(() => { loadPods(); loadNotes(); }, []);
 
-  const addItem = () => {
-    if (!currentItem.itemCode || !currentItem.description || currentItem.quantity === 0) {
-      alert('Please fill all item fields');
-      return;
-    }
-    const newItems = [...formData.items, { ...currentItem }];
-    setFormData({ ...formData, items: newItems });
-    calculateTotals(newItems);
-    setCurrentItem({ itemCode: '', description: '', volumeMl: 500, quantity: 0, pallets: 0 });
-  };
+  const loadPods = () => fetch('/api/pods').then(r => r.json()).then(setPods).catch(() => {});
+  const loadNotes = () => fetch('/api/collection-notes').then(r => r.json()).then(setNotes).catch(() => {});
 
-  const removeItem = (index) => {
-    const newItems = formData.items.filter((_, i) => i !== index);
-    setFormData({ ...formData, items: newItems });
-    calculateTotals(newItems);
-  };
+  const flash = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); };
 
-  const resetForm = () => {
-    setFormData({ gtr: '', sct: '', dateShipped: '', items: [], driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', clientEmail: '' });
-    setCurrentItem({ itemCode: '', description: '', volumeMl: 500, quantity: 0, pallets: 0 });
-    setTotals({ qty: 0, litres: 0 });
-  };
+  // ─── Log POD ────────────────────────────────────────────────
 
-  const createPOD = async () => {
-    if (!formData.gtr || !formData.sct || formData.items.length === 0) {
-      alert('Please complete all required fields and add at least one item');
-      return;
-    }
+  const submitPod = async () => {
+    if (!podForm.gtr || !podForm.sct) { alert('GTR and SCT are required'); return; }
     setLoading(true);
-    setError(null);
     try {
-      const body = new FormData();
-      body.append('gtr', formData.gtr);
-      body.append('sct', formData.sct);
-      body.append('dateShipped', formData.dateShipped);
-      body.append('items', JSON.stringify(formData.items));
+      const fd = new FormData();
+      Object.keys(podForm).forEach(k => fd.append(k, podForm[k]));
+      if (podPhoto) fd.append('photo', podPhoto);
+      const res = await fetch('/api/pod', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('Failed');
+      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+      setPodPhoto(null);
+      if (fileRef.current) fileRef.current.value = '';
+      await loadPods();
+      flash('POD logged successfully');
+      setView('dashboard');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
 
-      const res = await fetch(`${API}/api/pod/scan`, { method: 'POST', body });
-      if (!res.ok) throw new Error('Failed to create POD');
+  const deletePod = async (podId) => {
+    if (!confirm('Delete this POD?')) return;
+    await fetch(`/api/pod/${podId}`, { method: 'DELETE' });
+    loadPods();
+  };
 
-      const { podId } = await res.json();
+  // ─── Signature Pad ─────────────────────────────────────────
 
-      await fetch(`${API}/api/collection-note`, {
+  const initCanvas = () => {
+    setTimeout(() => {
+      const c = canvasRef.current;
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const rect = c.parentElement.getBoundingClientRect();
+      c.width = Math.min(rect.width - 4, 500);
+      c.height = 180;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+    }, 50);
+  };
+
+  const getPos = (e) => {
+    const c = canvasRef.current;
+    const rect = c.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  };
+
+  const startDraw = (e) => {
+    e.preventDefault();
+    setDrawing(true);
+    const ctx = canvasRef.current.getContext('2d');
+    const p = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+  };
+
+  const draw = (e) => {
+    if (!drawing) return;
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext('2d');
+    const p = getPos(e);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  };
+
+  const stopDraw = () => {
+    if (!drawing) return;
+    setDrawing(false);
+    setSignature(canvasRef.current.toDataURL('image/png'));
+  };
+
+  const clearSig = () => {
+    const c = canvasRef.current;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    setSignature(null);
+  };
+
+  // ─── Create Collection Note ─────────────────────────────────
+
+  const togglePod = (podId) => {
+    setSelectedPodIds(prev => prev.includes(podId) ? prev.filter(id => id !== podId) : [...prev, podId]);
+  };
+
+  const selectAll = () => {
+    if (selectedPodIds.length === pods.length) setSelectedPodIds([]);
+    else setSelectedPodIds(pods.map(p => p.podId));
+  };
+
+  const submitNote = async () => {
+    if (selectedPodIds.length === 0) { alert('Select at least one POD'); return; }
+    if (!signature) { alert('Driver signature is required'); return; }
+    if (!noteForm.driverName) { alert('Driver name is required'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/collection-note', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          podId,
-          driverName: formData.driverName,
-          vehicleInfo: formData.vehicleInfo,
-          farmDestination: formData.farmDestination,
-          accountantEmail: formData.accountantEmail,
-          clientEmail: formData.clientEmail
-        })
+        body: JSON.stringify({ ...noteForm, podIds: selectedPodIds, driverSignature: signature })
       });
-
-      resetForm();
-      setCurrentStep('dashboard');
-      await loadPods();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
+      setSelectedPodIds([]);
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+      setSignature(null);
+      await loadNotes();
+      flash('Collection Note created & emailed!');
+      setView('dashboard');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
   };
 
-  const viewPod = async (podId) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/pod/${podId}`);
-      const pod = await res.json();
-      setSelectedPod(pod);
-      setCurrentStep('details');
-    } catch {
-      setError('Could not load POD details.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const downloadPDF = async (noteId) => {
-    if (!noteId) { alert('No collection note found for this POD.'); return; }
-    window.open(`${API}/api/collection-note/${noteId}/pdf`, '_blank');
-  };
+  // ─── Render ─────────────────────────────────────────────────
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>Beverage POD Tracker</h1>
-        <p style={styles.subtitle}>Warehouse supply chain management</p>
+    <div style={S.container}>
+      <header style={S.header}>
+        <h1 style={S.title}>Beverage POD Tracker</h1>
+        <p style={S.subtitle}>Collection note management</p>
       </header>
 
-      {error && (
-        <div style={styles.errorBanner}>
-          {error}
-          <button style={styles.errorClose} onClick={() => setError(null)}>✕</button>
-        </div>
-      )}
+      {error && <div style={S.errorBanner}>{error}<button style={S.closeBtn} onClick={() => setError(null)}>✕</button></div>}
+      {success && <div style={S.successBanner}>{success}</div>}
 
-      {currentStep === 'dashboard' && (
-        <div style={styles.section}>
-          <div style={styles.actionBar}>
-            <button style={styles.buttonPrimary} onClick={() => setCurrentStep('scan')}>
-              + New POD
-            </button>
-            <button style={styles.buttonSecondary} onClick={loadPods}>
-              Refresh
-            </button>
+      {/* NAV */}
+      <div style={S.nav}>
+        <button style={view === 'dashboard' ? S.navActive : S.navBtn} onClick={() => setView('dashboard')}>Dashboard</button>
+        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => setView('logpod')}>Log POD</button>
+        <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Create Collection Note</button>
+        <button style={view === 'history' ? S.navActive : S.navBtn} onClick={() => setView('history')}>History</button>
+      </div>
+
+      {/* DASHBOARD */}
+      {view === 'dashboard' && (
+        <div style={S.card}>
+          <div style={S.row}>
+            <h2 style={S.heading}>Logged PODs ({pods.length})</h2>
+            <button style={S.btnSm} onClick={loadPods}>Refresh</button>
           </div>
-
-          {pods.length === 0 ? (
-            <div style={styles.emptyState}>
-              <p>No PODs yet. Create your first one!</p>
-            </div>
-          ) : (
-            <div style={styles.podList}>
-              <table style={styles.table}>
-                <thead style={styles.thead}>
-                  <tr>
-                    <th style={styles.th}>GTR</th>
-                    <th style={styles.th}>SCT</th>
-                    <th style={styles.th}>Date Received</th>
-                    <th style={styles.th}>Units</th>
-                    <th style={styles.th}>Litres</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={styles.th}>Actions</th>
+          {pods.length === 0 ? <p style={S.muted}>No PODs logged yet. Tap "Log POD" to start.</p> : (
+            <div style={S.tableWrap}>
+              <table style={S.table}>
+                <thead><tr style={S.thead}>
+                  <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th>
+                  <th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th>
+                  <th style={S.th}>Litres</th><th style={S.th}>Photo</th><th style={S.th}></th>
+                </tr></thead>
+                <tbody>{pods.map(p => (
+                  <tr key={p.podId} style={S.tr}>
+                    <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td>
+                    <td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
+                    <td style={S.td}>{p.receivedBy}</td><td style={S.td}>{p.pallets}</td>
+                    <td style={S.td}>{p.totalLitres}L</td>
+                    <td style={S.td}>{p.photo ? '📷' : '—'}</td>
+                    <td style={S.td}><button style={S.btnDel} onClick={() => deletePod(p.podId)}>✕</button></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {pods.map(pod => (
-                    <tr key={pod.podId} style={styles.tr}>
-                      <td style={styles.td}>{pod.gtr}</td>
-                      <td style={styles.td}>{pod.sct}</td>
-                      <td style={styles.td}>{pod.receivedDate}</td>
-                      <td style={styles.td}>{pod.totalQuantity}</td>
-                      <td style={styles.td}>{pod.totalLitres}L</td>
-                      <td style={styles.td}><span style={styles.badge}>{pod.status}</span></td>
-                      <td style={styles.td}>
-                        <button style={styles.buttonSmall} onClick={() => viewPod(pod.podId)}>
-                          View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}</tbody>
               </table>
             </div>
           )}
         </div>
       )}
 
-      {currentStep === 'scan' && (
-        <div style={styles.section}>
-          <h2 style={styles.heading}>New POD Entry</h2>
-
-          <div style={styles.formGroup}>
-            <label style={styles.label}>GTR Reference Number *</label>
-            <input type="text" placeholder="e.g., DM0101423" value={formData.gtr}
-              onChange={(e) => setFormData({ ...formData, gtr: e.target.value })} style={styles.input} />
+      {/* LOG POD */}
+      {view === 'logpod' && (
+        <div style={S.card}>
+          <h2 style={S.heading}>Log Received POD</h2>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>GTR Reference *</label>
+              <input style={S.input} placeholder="e.g. DM0101423" value={podForm.gtr} onChange={e => setPodForm({...podForm, gtr: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>SCT Number *</label>
+              <input style={S.input} placeholder="e.g. 521406" value={podForm.sct} onChange={e => setPodForm({...podForm, sct: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Date Shipped</label>
+              <input style={S.input} type="date" value={podForm.dateShipped} onChange={e => setPodForm({...podForm, dateShipped: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Date Received</label>
+              <input style={S.input} type="date" value={podForm.receivedDate} onChange={e => setPodForm({...podForm, receivedDate: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Received By</label>
+              <input style={S.input} placeholder="Person who received" value={podForm.receivedBy} onChange={e => setPodForm({...podForm, receivedBy: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Pallets</label>
+              <input style={S.input} type="number" min="0" value={podForm.pallets} onChange={e => setPodForm({...podForm, pallets: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Total Litres</label>
+              <input style={S.input} type="number" step="0.01" min="0" value={podForm.totalLitres} onChange={e => setPodForm({...podForm, totalLitres: e.target.value})} /></div>
           </div>
 
-          <div style={styles.formGroup}>
-            <label style={styles.label}>SCT Number *</label>
-            <input type="text" placeholder="e.g., 521406" value={formData.sct}
-              onChange={(e) => setFormData({ ...formData, sct: e.target.value })} style={styles.input} />
+          <div style={{...S.field, marginTop: 16}}>
+            <label style={S.label}>Photo of POD Document</label>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={S.input}
+              onChange={e => setPodPhoto(e.target.files[0] || null)} />
+            {podPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {podPhoto.name}</p>}
           </div>
 
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Date Shipped *</label>
-            <input type="date" value={formData.dateShipped}
-              onChange={(e) => setFormData({ ...formData, dateShipped: e.target.value })} style={styles.input} />
-          </div>
-
-          <div style={styles.divider}></div>
-          <h3 style={styles.subheading}>Add Items</h3>
-
-          <div style={styles.itemGrid}>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Item Code</label>
-              <input type="text" placeholder="e.g., 103999" value={currentItem.itemCode}
-                onChange={(e) => setCurrentItem({ ...currentItem, itemCode: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Description</label>
-              <input type="text" placeholder="e.g., SMIRNOFF PINE TWIST" value={currentItem.description}
-                onChange={(e) => setCurrentItem({ ...currentItem, description: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Volume</label>
-              <select value={currentItem.volumeMl}
-                onChange={(e) => setCurrentItem({ ...currentItem, volumeMl: parseInt(e.target.value) })} style={styles.input}>
-                {ubcCans.map(can => <option key={can.ml} value={can.ml}>{can.label}</option>)}
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Quantity (units)</label>
-              <input type="number" min="0" value={currentItem.quantity}
-                onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseInt(e.target.value) || 0 })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Pallets</label>
-              <input type="number" min="0" value={currentItem.pallets}
-                onChange={(e) => setCurrentItem({ ...currentItem, pallets: parseInt(e.target.value) || 0 })} style={styles.input} />
-            </div>
-            <button style={styles.buttonAdd} onClick={addItem}>Add Item</button>
-          </div>
-
-          {formData.items.length > 0 && (
-            <div style={styles.itemsList}>
-              <h4 style={styles.label}>Added Items:</h4>
-              {formData.items.map((item, idx) => (
-                <div key={idx} style={styles.itemCard}>
-                  <div>
-                    <p style={styles.itemText}>{item.itemCode} - {item.description}</p>
-                    <p style={styles.itemText}>{item.quantity}x {item.volumeMl}ml = {(item.quantity * item.volumeMl / 1000).toFixed(2)}L
-                      {item.pallets > 0 ? ` (${item.pallets} pallets)` : ''}</p>
-                  </div>
-                  <button style={styles.buttonDelete} onClick={() => removeItem(idx)}>✕</button>
-                </div>
-              ))}
-              <div style={styles.totalsBox}>
-                <p><strong>Total Units:</strong> {totals.qty}</p>
-                <p><strong>Total Litres:</strong> {totals.litres}L</p>
-              </div>
-            </div>
-          )}
-
-          <div style={styles.divider}></div>
-          <h3 style={styles.subheading}>Collection Details</h3>
-
-          <div style={styles.formGrid}>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Driver Name</label>
-              <input type="text" placeholder="Driver name" value={formData.driverName}
-                onChange={(e) => setFormData({ ...formData, driverName: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Vehicle Info</label>
-              <input type="text" placeholder="License plate / vehicle details" value={formData.vehicleInfo}
-                onChange={(e) => setFormData({ ...formData, vehicleInfo: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Farm Destination</label>
-              <input type="text" placeholder="Farm name / location" value={formData.farmDestination}
-                onChange={(e) => setFormData({ ...formData, farmDestination: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Accountant Email</label>
-              <input type="email" placeholder="accountant@example.com" value={formData.accountantEmail}
-                onChange={(e) => setFormData({ ...formData, accountantEmail: e.target.value })} style={styles.input} />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Client / Farm Email</label>
-              <input type="email" placeholder="client@example.com" value={formData.clientEmail}
-                onChange={(e) => setFormData({ ...formData, clientEmail: e.target.value })} style={styles.input} />
-            </div>
-          </div>
-
-          <div style={styles.buttonGroup}>
-            <button style={{ ...styles.buttonPrimary, opacity: loading ? 0.6 : 1 }} onClick={createPOD} disabled={loading}>
-              {loading ? 'Creating...' : 'Create POD'}
+          <div style={S.btnRow}>
+            <button style={{...S.btnPrimary, opacity: loading ? 0.6 : 1}} onClick={submitPod} disabled={loading}>
+              {loading ? 'Saving...' : 'Save POD'}
             </button>
-            <button style={styles.buttonSecondary} onClick={() => { resetForm(); setCurrentStep('dashboard'); }}>
-              Cancel
-            </button>
+            <button style={S.btnSec} onClick={() => setView('dashboard')}>Cancel</button>
           </div>
         </div>
       )}
 
-      {currentStep === 'details' && selectedPod && (
-        <div style={styles.section}>
-          <button style={styles.buttonBack} onClick={() => { setCurrentStep('dashboard'); setSelectedPod(null); }}>
-            ← Back
-          </button>
+      {/* CREATE COLLECTION NOTE */}
+      {view === 'create' && (
+        <div style={S.card}>
+          <h2 style={S.heading}>Create Collection Note</h2>
 
-          <h2 style={styles.heading}>POD Details</h2>
+          <h3 style={S.sub}>1. Select PODs to include</h3>
+          {pods.length === 0 ? <p style={S.muted}>No PODs logged. Log some PODs first.</p> : (
+            <div>
+              <button style={S.btnSm} onClick={selectAll}>
+                {selectedPodIds.length === pods.length ? 'Deselect All' : 'Select All'}
+              </button>
+              <div style={{...S.tableWrap, marginTop: 8}}>
+                <table style={S.table}>
+                  <thead><tr style={S.thead}>
+                    <th style={S.th}>✓</th><th style={S.th}>GTR</th><th style={S.th}>SCT</th>
+                    <th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Litres</th>
+                  </tr></thead>
+                  <tbody>{pods.map(p => (
+                    <tr key={p.podId} style={{...S.tr, backgroundColor: selectedPodIds.includes(p.podId) ? '#dbeafe' : '#fff', cursor: 'pointer'}} onClick={() => togglePod(p.podId)}>
+                      <td style={S.td}><input type="checkbox" checked={selectedPodIds.includes(p.podId)} readOnly /></td>
+                      <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td>
+                      <td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
+                      <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalLitres}L</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {selectedPodIds.length > 0 && (
+                <div style={S.totalsBox}>
+                  <strong>Selected: </strong>{selectedPodIds.length} PODs | {' '}
+                  {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.pallets||0), 0)} pallets | {' '}
+                  {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalLitres||0), 0).toFixed(2)}L
+                </div>
+              )}
+            </div>
+          )}
 
-          <div style={styles.detailsGrid}>
-            <div style={styles.detailCard}>
-              <p style={styles.detailLabel}>GTR Reference</p>
-              <p style={styles.detailValue}>{selectedPod.gtr}</p>
-            </div>
-            <div style={styles.detailCard}>
-              <p style={styles.detailLabel}>SCT Number</p>
-              <p style={styles.detailValue}>{selectedPod.sct}</p>
-            </div>
-            <div style={styles.detailCard}>
-              <p style={styles.detailLabel}>Date Shipped</p>
-              <p style={styles.detailValue}>{selectedPod.dateShipped}</p>
-            </div>
-            <div style={styles.detailCard}>
-              <p style={styles.detailLabel}>Date Received</p>
-              <p style={styles.detailValue}>{selectedPod.receivedDate}</p>
-            </div>
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>2. Collection Details</h3>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Period Start</label>
+              <input style={S.input} type="date" value={noteForm.periodStart} onChange={e => setNoteForm({...noteForm, periodStart: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Period End</label>
+              <input style={S.input} type="date" value={noteForm.periodEnd} onChange={e => setNoteForm({...noteForm, periodEnd: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Driver Name *</label>
+              <input style={S.input} placeholder="Driver name" value={noteForm.driverName} onChange={e => setNoteForm({...noteForm, driverName: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Vehicle Info</label>
+              <input style={S.input} placeholder="License plate" value={noteForm.vehicleInfo} onChange={e => setNoteForm({...noteForm, vehicleInfo: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Farm / Destination</label>
+              <input style={S.input} placeholder="Farm name" value={noteForm.farmDestination} onChange={e => setNoteForm({...noteForm, farmDestination: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Accountant Email</label>
+              <input style={S.input} type="email" placeholder="accountant@email.com" value={noteForm.accountantEmail} onChange={e => setNoteForm({...noteForm, accountantEmail: e.target.value})} /></div>
           </div>
 
-          <h3 style={styles.subheading}>Items</h3>
-          <table style={styles.table}>
-            <thead style={styles.thead}>
-              <tr>
-                <th style={styles.th}>Code</th>
-                <th style={styles.th}>Description</th>
-                <th style={styles.th}>Volume</th>
-                <th style={styles.th}>Qty</th>
-                <th style={styles.th}>Pallets</th>
-                <th style={styles.th}>Total L</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selectedPod.items.map((item, idx) => (
-                <tr key={idx} style={styles.tr}>
-                  <td style={styles.td}>{item.itemCode}</td>
-                  <td style={styles.td}>{item.description}</td>
-                  <td style={styles.td}>{item.volumeMl}ml</td>
-                  <td style={styles.td}>{item.quantity}</td>
-                  <td style={styles.td}>{item.pallets || 0}</td>
-                  <td style={styles.td}>{(item.quantity * item.volumeMl / 1000).toFixed(2)}L</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div style={styles.totalsBox}>
-            <p><strong>Total Units:</strong> {selectedPod.totalQuantity}</p>
-            <p><strong>Total Litres:</strong> {selectedPod.totalLitres}L</p>
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>3. Driver Signature</h3>
+          <p style={S.muted}>Sign below with your finger or mouse</p>
+          <div style={{border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none'}}>
+            <canvas ref={canvasRef} style={{display: 'block', borderRadius: 6}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
+          </div>
+          <div style={{marginTop: 8}}>
+            <button style={S.btnSm} onClick={clearSig}>Clear Signature</button>
           </div>
 
-          <div style={styles.buttonGroup}>
-            <button style={styles.buttonPrimary} onClick={() => downloadPDF(selectedPod.noteId)}>
-              Download Collection Note PDF
+          <div style={S.btnRow}>
+            <button style={{...S.btnPrimary, opacity: loading ? 0.6 : 1}} onClick={submitNote} disabled={loading}>
+              {loading ? 'Creating...' : 'Create Collection Note & Email'}
             </button>
-            <button style={styles.buttonSecondary} onClick={() => { setCurrentStep('dashboard'); setSelectedPod(null); }}>
-              Close
-            </button>
+            <button style={S.btnSec} onClick={() => setView('dashboard')}>Cancel</button>
           </div>
+        </div>
+      )}
+
+      {/* HISTORY */}
+      {view === 'history' && (
+        <div style={S.card}>
+          <div style={S.row}>
+            <h2 style={S.heading}>Collection Note History</h2>
+            <button style={S.btnSm} onClick={loadNotes}>Refresh</button>
+          </div>
+          {notes.length === 0 ? <p style={S.muted}>No collection notes yet.</p> : (
+            <div>{notes.map(n => (
+              <div key={n.noteId} style={S.noteCard}>
+                <div style={S.row}>
+                  <div>
+                    <p style={{margin: '0 0 4px', fontWeight: 600}}>
+                      {n.periodStart} to {n.periodEnd}
+                    </p>
+                    <p style={S.muted}>
+                      {n.pods.length} PODs | Driver: {n.driverName} | Farm: {n.farmDestination || 'N/A'}
+                    </p>
+                  </div>
+                  <button style={S.btnPrimary} onClick={() => window.open(`/api/collection-note/${n.noteId}/pdf`, '_blank')}>
+                    Download PDF
+                  </button>
+                </div>
+              </div>
+            ))}</div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-const styles = {
-  container: { maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif', backgroundColor: '#f5f7fa', minHeight: '100vh' },
-  header: { backgroundColor: '#fff', padding: '30px', borderRadius: '12px', marginBottom: '30px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' },
-  title: { margin: '0 0 8px 0', fontSize: '32px', color: '#1a1a1a', fontWeight: '700' },
-  subtitle: { margin: '0', fontSize: '14px', color: '#666', fontWeight: '400' },
-  section: { backgroundColor: '#fff', padding: '30px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' },
-  heading: { fontSize: '24px', marginBottom: '20px', color: '#1a1a1a', fontWeight: '600' },
-  subheading: { fontSize: '16px', marginTop: '24px', marginBottom: '16px', color: '#333', fontWeight: '600' },
-  actionBar: { marginBottom: '24px', display: 'flex', gap: '12px' },
-  errorBanner: { backgroundColor: '#fee2e2', color: '#991b1b', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  errorClose: { background: 'none', border: 'none', cursor: 'pointer', color: '#991b1b', fontWeight: '700' },
-  buttonPrimary: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '600' },
-  buttonSecondary: { backgroundColor: '#e5e7eb', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '600' },
-  buttonSmall: { backgroundColor: '#3b82f6', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' },
-  buttonDelete: { backgroundColor: '#ef4444', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' },
-  buttonBack: { backgroundColor: 'transparent', color: '#2563eb', border: '1px solid #2563eb', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', marginBottom: '20px' },
-  buttonAdd: { backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '600', height: '44px' },
-  buttonGroup: { display: 'flex', gap: '12px', marginTop: '30px' },
-  formGroup: { marginBottom: '16px' },
-  label: { display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#333' },
-  input: { width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontFamily: 'inherit', boxSizing: 'border-box' },
-  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' },
-  itemGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '20px' },
-  itemsList: { backgroundColor: '#f9fafb', padding: '16px', borderRadius: '8px', marginBottom: '20px' },
-  itemCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: '12px', marginBottom: '8px', borderRadius: '6px', border: '1px solid #e5e7eb' },
-  itemText: { margin: '4px 0', fontSize: '14px', color: '#333' },
-  totalsBox: { backgroundColor: '#fff', padding: '12px', borderRadius: '6px', borderLeft: '4px solid #2563eb', marginTop: '12px' },
-  divider: { height: '1px', backgroundColor: '#e5e7eb', margin: '24px 0' },
-  emptyState: { textAlign: 'center', padding: '60px 20px', color: '#999' },
-  podList: { overflowX: 'auto' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '14px' },
-  thead: { backgroundColor: '#f3f4f6', borderBottom: '2px solid #e5e7eb' },
-  th: { padding: '12px', textAlign: 'left', fontWeight: '600', color: '#333' },
+// ─── Styles ─────────────────────────────────────────────────
+
+const S = {
+  container: { maxWidth: 1000, margin: '0 auto', padding: 16, fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif', backgroundColor: '#f5f7fa', minHeight: '100vh' },
+  header: { backgroundColor: '#fff', padding: '24px 20px', borderRadius: 12, marginBottom: 16, boxShadow: '0 2px 4px rgba(0,0,0,0.05)', textAlign: 'center' },
+  title: { margin: '0 0 4px', fontSize: 26, color: '#1a1a1a', fontWeight: 700 },
+  subtitle: { margin: 0, fontSize: 13, color: '#666' },
+  nav: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
+  navBtn: { flex: 1, minWidth: 120, padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 8, backgroundColor: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#333' },
+  navActive: { flex: 1, minWidth: 120, padding: '10px 12px', border: '2px solid #2563eb', borderRadius: 8, backgroundColor: '#eff6ff', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#2563eb' },
+  card: { backgroundColor: '#fff', padding: 24, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: 16 },
+  heading: { fontSize: 20, margin: '0 0 16px', color: '#1a1a1a', fontWeight: 600 },
+  sub: { fontSize: 15, margin: '20px 0 12px', color: '#333', fontWeight: 600 },
+  row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 },
+  field: { marginBottom: 8 },
+  label: { display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: '#555' },
+  input: { width: '100%', padding: '9px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' },
+  btnPrimary: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '11px 22px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+  btnSec: { backgroundColor: '#e5e7eb', color: '#333', border: 'none', padding: '11px 22px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+  btnSm: { backgroundColor: '#f3f4f6', color: '#333', border: '1px solid #d1d5db', padding: '6px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 },
+  btnDel: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 },
+  btnRow: { display: 'flex', gap: 10, marginTop: 24 },
+  tableWrap: { overflowX: 'auto' },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
+  thead: { backgroundColor: '#f3f4f6' },
+  th: { padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: '#333', borderBottom: '2px solid #e5e7eb' },
   tr: { borderBottom: '1px solid #e5e7eb' },
-  td: { padding: '12px', color: '#666' },
-  badge: { display: 'inline-block', backgroundColor: '#dbeafe', color: '#1e40af', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: '600' },
-  detailsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' },
-  detailCard: { backgroundColor: '#f9fafb', padding: '16px', borderRadius: '8px', border: '1px solid #e5e7eb' },
-  detailLabel: { fontSize: '12px', color: '#666', fontWeight: '600', margin: '0 0 8px 0' },
-  detailValue: { fontSize: '16px', color: '#1a1a1a', fontWeight: '600', margin: '0' }
+  td: { padding: '10px 8px', color: '#555' },
+  muted: { color: '#999', fontSize: 13, margin: 0 },
+  divider: { height: 1, backgroundColor: '#e5e7eb', margin: '20px 0' },
+  totalsBox: { backgroundColor: '#f0f9ff', padding: '10px 14px', borderRadius: 6, borderLeft: '4px solid #2563eb', marginTop: 10, fontSize: 13, fontWeight: 500 },
+  noteCard: { border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 10 },
+  errorBanner: { backgroundColor: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 },
+  successBanner: { backgroundColor: '#dcfce7', color: '#166534', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 500 },
+  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, color: 'inherit' }
 };
