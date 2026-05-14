@@ -96,8 +96,21 @@ function MainApp({ user, onLogout }) {
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'crew' });
   const [resendModal, setResendModal] = useState(null);
   const [resendEmail, setResendEmail] = useState('');
+  const [pwModal, setPwModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [dupWarning, setDupWarning] = useState(null);
+  const [offlineQueue, setOfflineQueue] = useState(() => { try { return JSON.parse(localStorage.getItem('pod_offline_queue') || '[]'); } catch { return []; } });
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  useEffect(() => { loadPods(); loadNotes(); loadStats(); }, []);
+  useEffect(() => {
+    const on = () => { setIsOnline(true); syncOfflineQueue(); };
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
+
+  useEffect(() => { loadPods(); loadNotes(); loadStats(); if (isOnline && offlineQueue.length > 0) syncOfflineQueue(); }, []);
 
   const loadPods = () => api('/api/pods').then(r => r.json()).then(setPods).catch(() => {});
   const loadArchivedPods = () => api('/api/pods?archived=true').then(r => r.json()).then(setPods).catch(() => {});
@@ -105,6 +118,49 @@ function MainApp({ user, onLogout }) {
   const loadStats = () => api('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
   const loadUsers = () => api('/api/users').then(r => r.json()).then(setUsers).catch(() => {});
   const flash = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); };
+
+  const syncOfflineQueue = async () => {
+    const queue = JSON.parse(localStorage.getItem('pod_offline_queue') || '[]');
+    if (queue.length === 0) return;
+    let synced = 0;
+    for (const pod of queue) {
+      try {
+        const fd = new FormData();
+        Object.keys(pod).forEach(k => fd.append(k, pod[k]));
+        const res = await api('/api/pod', { method: 'POST', body: fd });
+        if (res.ok) synced++;
+      } catch {}
+    }
+    localStorage.setItem('pod_offline_queue', '[]');
+    setOfflineQueue([]);
+    if (synced > 0) { loadPods(); loadStats(); flash(synced + ' offline POD(s) synced'); }
+  };
+
+  const checkDuplicate = async (gtr, sct) => {
+    if (!gtr && !sct) { setDupWarning(null); return; }
+    try {
+      const params = new URLSearchParams();
+      if (gtr) params.set('gtr', gtr);
+      if (sct) params.set('sct', sct);
+      const res = await api('/api/pods/check-duplicate?' + params.toString());
+      const data = await res.json();
+      if (data.duplicate) setDupWarning('Duplicate found: GTR ' + (data.existing.gtr || '') + ' / SCT ' + (data.existing.sct || '') + ' (received ' + (data.existing.receivedDate || '') + ')');
+      else setDupWarning(null);
+    } catch { setDupWarning(null); }
+  };
+
+  const changePassword = async () => {
+    if (pwForm.newPassword !== pwForm.confirm) { alert('Passwords do not match'); return; }
+    if (!pwForm.currentPassword || !pwForm.newPassword) { alert('Fill in all fields'); return; }
+    try {
+      const res = await api('/api/change-password', { method: 'PUT', body: JSON.stringify({ currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      flash('Password changed');
+      setPwModal(false);
+      setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+    } catch (e) { alert(e.message); }
+  };
 
   const searchPods = async () => {
     const params = new URLSearchParams();
@@ -126,8 +182,20 @@ function MainApp({ user, onLogout }) {
 
   const submitPod = async () => {
     if (!podForm.gtr || !podForm.sct) { alert('GTR and SCT are required'); return; }
+    if (dupWarning && !editingPod && !confirm('Duplicate detected. Save anyway?')) return;
     setLoading(true);
     try {
+      if (!isOnline && !editingPod) {
+        const q = [...offlineQueue, { ...podForm }];
+        localStorage.setItem('pod_offline_queue', JSON.stringify(q));
+        setOfflineQueue(q);
+        setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+        setDupWarning(null);
+        flash('POD saved offline. Will sync when back online.');
+        setView('dashboard');
+        setLoading(false);
+        return;
+      }
       const fd = new FormData();
       Object.keys(podForm).forEach(k => fd.append(k, podForm[k]));
       if (podPhoto) fd.append('photo', podPhoto);
@@ -138,11 +206,20 @@ function MainApp({ user, onLogout }) {
       setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
       setPodPhoto(null);
       setEditingPod(null);
+      setDupWarning(null);
       if (fileRef.current) fileRef.current.value = '';
       await loadPods(); loadStats();
       flash(editingPod ? 'POD updated' : 'POD logged successfully');
       setView('dashboard');
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      if (!navigator.onLine && !editingPod) {
+        const q = [...offlineQueue, { ...podForm }];
+        localStorage.setItem('pod_offline_queue', JSON.stringify(q));
+        setOfflineQueue(q);
+        flash('Network error. POD saved offline.');
+        setView('dashboard');
+      } else { setError(e.message); }
+    }
     finally { setLoading(false); }
   };
 
@@ -246,11 +323,16 @@ function MainApp({ user, onLogout }) {
           </div>
           <div style={{ textAlign: 'right' }}>
             <p style={{ fontSize: 12, color: '#666', margin: '0 0 4px' }}>{user.username} ({user.role})</p>
-            <button style={S.btnSm} onClick={onLogout}>Logout</button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={S.btnSm} onClick={() => setPwModal(true)}>Password</button>
+              <button style={S.btnSm} onClick={onLogout}>Logout</button>
+            </div>
           </div>
         </div>
       </header>
 
+      {!isOnline && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600 }}>Offline mode — PODs will be saved locally and synced when back online</div>}
+      {offlineQueue.length > 0 && <div style={{ backgroundColor: '#e0e7ff', color: '#3730a3', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{offlineQueue.length} POD(s) queued offline {isOnline && <button style={S.btnSm} onClick={syncOfflineQueue}>Sync Now</button>}</div>}
       {error && <div style={S.errorBanner}>{error}<button style={S.closeBtn} onClick={() => setError(null)}>x</button></div>}
       {success && <div style={S.successBanner}>{success}</div>}
 
@@ -319,14 +401,15 @@ function MainApp({ user, onLogout }) {
         <div style={S.card}>
           <h2 style={S.heading}>{editingPod ? 'Edit POD' : 'Log Received POD'}</h2>
           <div style={S.grid2}>
-            <div style={S.field}><label style={S.label}>GTR Reference *</label><input style={S.input} placeholder="e.g. DM0101423" value={podForm.gtr} onChange={e => setPodForm({...podForm, gtr: e.target.value})} /></div>
-            <div style={S.field}><label style={S.label}>SCT Number *</label><input style={S.input} placeholder="e.g. 521406" value={podForm.sct} onChange={e => setPodForm({...podForm, sct: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>GTR Reference *</label><input style={S.input} placeholder="e.g. DM0101423" value={podForm.gtr} onChange={e => setPodForm({...podForm, gtr: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
+            <div style={S.field}><label style={S.label}>SCT Number *</label><input style={S.input} placeholder="e.g. 521406" value={podForm.sct} onChange={e => setPodForm({...podForm, sct: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
             <div style={S.field}><label style={S.label}>Date Shipped</label><input style={S.input} type="date" value={podForm.dateShipped} onChange={e => setPodForm({...podForm, dateShipped: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Date Received</label><input style={S.input} type="date" value={podForm.receivedDate} onChange={e => setPodForm({...podForm, receivedDate: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Received By</label><input style={S.input} placeholder="Person who received" value={podForm.receivedBy} onChange={e => setPodForm({...podForm, receivedBy: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Pallets</label><input style={S.input} type="number" min="0" value={podForm.pallets} onChange={e => setPodForm({...podForm, pallets: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Total Litres</label><input style={S.input} type="number" step="0.01" min="0" value={podForm.totalLitres} onChange={e => setPodForm({...podForm, totalLitres: e.target.value})} /></div>
           </div>
+          {dupWarning && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginTop: 12, fontSize: 13, fontWeight: 500 }}>{dupWarning}</div>}
           <div style={{...S.field, marginTop: 16}}>
             <label style={S.label}>Photo of POD Document</label>
             <input ref={fileRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setPodPhoto(e.target.files[0] || null)} />
@@ -409,6 +492,15 @@ function MainApp({ user, onLogout }) {
                   <p style={{margin: '0 0 4px', fontWeight: 600}}>{n.periodStart} to {n.periodEnd}</p>
                   <p style={S.muted}>{n.pods.length} PODs | {n.pods.reduce((s,p) => s + (p.pallets||0), 0)} pallets | {n.pods.reduce((s,p) => s + (p.totalLitres||0), 0).toFixed(2)}L</p>
                   <p style={S.muted}>Driver: {n.driverName} | Farm: {n.farmDestination || 'N/A'}</p>
+                  {n.emailStatus && n.emailStatus.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {n.emailStatus.map((es, i) => (
+                        <span key={i} style={{ fontSize: 11, marginRight: 8, padding: '2px 8px', borderRadius: 10, backgroundColor: es.sent ? '#dcfce7' : '#fee2e2', color: es.sent ? '#166534' : '#991b1b' }}>
+                          {es.to}: {es.sent ? 'Sent' : 'Failed'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {n.pods.some(p => p.photo) && (
                   <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -461,6 +553,22 @@ function MainApp({ user, onLogout }) {
           <div className="photo-modal" onClick={e => e.stopPropagation()}>
             <img src={photoModal} alt="POD Photo" />
             <div style={{ textAlign: 'center', marginTop: 12 }}><button style={S.btnSec} onClick={() => setPhotoModal(null)}>Close</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── CHANGE PASSWORD MODAL ─── */}
+      {pwModal && (
+        <div className="modal-overlay" onClick={() => setPwModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={S.heading}>Change Password</h3>
+            <div style={S.field}><label style={S.label}>Current Password</label><input style={S.input} type="password" value={pwForm.currentPassword} onChange={e => setPwForm({...pwForm, currentPassword: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>New Password</label><input style={S.input} type="password" value={pwForm.newPassword} onChange={e => setPwForm({...pwForm, newPassword: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Confirm New Password</label><input style={S.input} type="password" value={pwForm.confirm} onChange={e => setPwForm({...pwForm, confirm: e.target.value})} /></div>
+            <div style={{ ...S.btnRow, marginTop: 16 }}>
+              <button style={S.btnPrimary} onClick={changePassword}>Change Password</button>
+              <button style={S.btnSec} onClick={() => setPwModal(false)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}

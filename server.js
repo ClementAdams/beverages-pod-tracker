@@ -67,7 +67,8 @@ const noteSchema = new mongoose.Schema({
   driverSignature: String,
   periodStart: String,
   periodEnd: String,
-  createdDate: { type: Date, default: Date.now }
+  createdDate: { type: Date, default: Date.now },
+  emailStatus: [{ to: String, sent: Boolean, error: String, sentAt: Date }]
 });
 
 const userSchema = new mongoose.Schema({
@@ -289,6 +290,19 @@ app.delete('/api/users/:id', auth, adminOnly, async (req, res) => {
   res.json({ success: true });
 });
 
+app.put('/api/change-password', auth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!(await bcrypt.compare(currentPassword, user.password))) return res.status(401).json({ error: 'Current password is incorrect' });
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Routes ───────────────────────────────────────────────────
 
 // Dashboard stats
@@ -350,6 +364,17 @@ app.get('/api/collection-notes/export', auth, async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="collection-notes-export.csv"');
   res.send(header + rows);
+});
+
+// Check for duplicate GTR/SCT
+app.get('/api/pods/check-duplicate', auth, async (req, res) => {
+  const { gtr, sct } = req.query;
+  const filter = { $or: [] };
+  if (gtr) filter.$or.push({ gtr: new RegExp('^' + gtr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') });
+  if (sct) filter.$or.push({ sct: new RegExp('^' + sct.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') });
+  if (filter.$or.length === 0) return res.json({ duplicate: false });
+  const existing = await Pod.findOne(filter).lean();
+  res.json({ duplicate: !!existing, existing: existing ? { gtr: existing.gtr, sct: existing.sct, receivedDate: existing.receivedDate, archived: existing.archived } : null });
 });
 
 // Log a single POD (with optional photo)
@@ -415,9 +440,13 @@ app.post('/api/collection-note', auth, async (req, res) => {
 
     res.json({ success: true, noteId: note.noteId });
 
-    setTimeout(() => {
-      const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
-      sendCollectionEmail(note.toObject(), photoFiles).catch(err => console.error('Email failed:', err.message));
+    setTimeout(async () => {
+      try {
+        const photoFiles = selectedPods.map(p => p.photo).filter(Boolean);
+        const results = await sendCollectionEmail(note.toObject(), photoFiles);
+        const emailStatus = (Array.isArray(results) ? results : []).map(r => ({ to: r.to, sent: r.sent, error: r.error || '', sentAt: new Date() }));
+        await Note.updateOne({ noteId: note.noteId }, { emailStatus });
+      } catch (err) { console.error('Email failed:', err.message); }
     }, 100);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -452,7 +481,7 @@ app.get('/api/email/status', (req, res) => {
   res.json({ configured: !!process.env.RESEND_API_KEY });
 });
 
-app.get('/api/version', (req, res) => res.json({ version: 11 }));
+app.get('/api/version', (req, res) => res.json({ version: 12 }));
 
 app.get('/api/test-email', async (req, res) => {
   try {
