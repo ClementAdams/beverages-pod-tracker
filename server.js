@@ -50,7 +50,7 @@ const podSchema = new mongoose.Schema({
   receivedDate: String,
   receivedBy: String,
   pallets: Number,
-  totalLitres: Number,
+  totalUnits: Number,
   photo: String,
   archived: { type: Boolean, default: false },
   collectionNoteId: String,
@@ -64,6 +64,8 @@ const noteSchema = new mongoose.Schema({
   vehicleInfo: String,
   farmDestination: String,
   accountantEmail: String,
+  manifestNumber: String,
+  manifestPhoto: String,
   driverSignature: String,
   periodStart: String,
   periodEnd: String,
@@ -129,6 +131,9 @@ function generateCollectionPDF(note) {
     doc.fontSize(10).font('Helvetica').text(`Note ID: ${note.noteId}`, { align: 'center' });
     doc.text(`Date Created: ${new Date(note.createdDate).toLocaleDateString()}`, { align: 'center' });
     doc.text(`Period: ${note.periodStart || ''} to ${note.periodEnd || ''}`, { align: 'center' });
+    if (note.manifestNumber) {
+      doc.text(`Manifest Number: ${note.manifestNumber}`, { align: 'center' });
+    }
     doc.moveDown(1);
 
     // POD Summary Table
@@ -136,7 +141,7 @@ function generateCollectionPDF(note) {
     doc.moveDown(0.5);
 
     const colX = [40, 130, 210, 300, 380, 440, 510];
-    const headers = ['GTR', 'SCT', 'Shipped', 'Received', 'Pallets', 'Litres', 'Received By'];
+    const headers = ['GTR', 'SCT', 'Shipped', 'Received', 'Pallets', 'Units', 'Received By'];
     doc.fontSize(8).font('Helvetica-Bold');
     headers.forEach((h, i) => doc.text(h, colX[i], doc.y, { width: 70, continued: i < headers.length - 1 }));
     doc.text('');
@@ -152,7 +157,7 @@ function generateCollectionPDF(note) {
       doc.text(p.dateShipped || '-', colX[2], y, { width: 85 });
       doc.text(p.receivedDate || '-', colX[3], y, { width: 75 });
       doc.text(String(p.pallets || 0), colX[4], y, { width: 55 });
-      doc.text(`${p.totalLitres || 0}L`, colX[5], y, { width: 65 });
+      doc.text(`${p.totalUnits || 0}`, colX[5], y, { width: 65 });
       doc.text(p.receivedBy || '-', colX[6], y, { width: 60 });
       y += 18;
     });
@@ -162,11 +167,11 @@ function generateCollectionPDF(note) {
     doc.moveTo(40, y).lineTo(570, y).stroke();
     y += 8;
     const totalPallets = note.pods.reduce((s, p) => s + (p.pallets || 0), 0);
-    const totalLitres = note.pods.reduce((s, p) => s + (p.totalLitres || 0), 0);
+    const totalUnits = note.pods.reduce((s, p) => s + (p.totalUnits || 0), 0);
     doc.font('Helvetica-Bold').fontSize(10);
     doc.text(`Total PODs: ${note.pods.length}`, 40, y);
     doc.text(`Total Pallets: ${totalPallets}`, 200, y);
-    doc.text(`Total Litres: ${totalLitres.toFixed(2)}L`, 370, y);
+    doc.text(`Total Units: ${totalUnits.toFixed(2)}`, 370, y);
 
     // Driver info
     y += 35;
@@ -209,18 +214,31 @@ async function sendCollectionEmail(note, photoFiles) {
 
   const pdfBuffer = await generateCollectionPDF(note);
   const totalPallets = note.pods.reduce((s, p) => s + (p.pallets || 0), 0);
-  const totalLitres = note.pods.reduce((s, p) => s + (p.totalLitres || 0), 0);
+  const totalUnits = note.pods.reduce((s, p) => s + (p.totalUnits || 0), 0);
 
   const html = `<h2>Collection Note</h2>
     <p><b>Period:</b> ${note.periodStart || ''} to ${note.periodEnd || ''}</p>
-    <p><b>PODs:</b> ${note.pods.length} | <b>Pallets:</b> ${totalPallets} | <b>Litres:</b> ${totalLitres.toFixed(2)}L</p>
+    ${note.manifestNumber ? `<p><b>Manifest Number:</b> ${note.manifestNumber}</p>` : ''}
+    <p><b>PODs:</b> ${note.pods.length} | <b>Pallets:</b> ${totalPallets} | <b>Units:</b> ${totalUnits.toFixed(2)}</p>
     <p><b>Driver:</b> ${note.driverName || 'N/A'}</p>
     <p><b>Farm:</b> ${note.farmDestination || 'N/A'}</p>
-    <p>Collection note PDF and POD photos attached.</p>`;
+    <p>Collection note PDF, manifest photo, and POD photos attached.</p>`;
 
   const attachments = [
     { filename: `collection-note-${note.noteId}.pdf`, content: pdfBuffer.toString('base64') }
   ];
+
+  // Add manifest photo if available
+  if (note.manifestPhoto) {
+    const manifestPath = path.join(__dirname, note.manifestPhoto);
+    if (fs.existsSync(manifestPath)) {
+      const manifestContent = fs.readFileSync(manifestPath);
+      attachments.push({
+        filename: `Manifest-${note.manifestNumber || note.noteId}${path.extname(note.manifestPhoto)}`,
+        content: manifestContent.toString('base64')
+      });
+    }
+  }
 
   photoFiles.forEach((photo, i) => {
     const filePath = path.join(__dirname, photo);
@@ -312,15 +330,15 @@ app.get('/api/stats', auth, async (req, res) => {
   const totalNotes = await Note.countDocuments();
   const activeAgg = await Pod.aggregate([
     { $match: { archived: { $ne: true } } },
-    { $group: { _id: null, pallets: { $sum: '$pallets' }, litres: { $sum: '$totalLitres' } } }
+    { $group: { _id: null, pallets: { $sum: '$pallets' }, units: { $sum: '$totalUnits' } } }
   ]);
   const allAgg = await Pod.aggregate([
-    { $group: { _id: null, pallets: { $sum: '$pallets' }, litres: { $sum: '$totalLitres' } } }
+    { $group: { _id: null, pallets: { $sum: '$pallets' }, units: { $sum: '$totalUnits' } } }
   ]);
   res.json({
     activePods, archivedPods, totalNotes,
-    activePallets: activeAgg[0]?.pallets || 0, activeLitres: activeAgg[0]?.litres || 0,
-    totalPallets: allAgg[0]?.pallets || 0, totalLitres: allAgg[0]?.litres || 0
+    activePallets: activeAgg[0]?.pallets || 0, activeUnits: activeAgg[0]?.units || 0,
+    totalPallets: allAgg[0]?.pallets || 0, totalUnits: allAgg[0]?.units || 0
   });
 });
 
@@ -345,8 +363,8 @@ app.get('/api/pods/search', auth, async (req, res) => {
 app.get('/api/pods/export', auth,  async (req, res) => {
   const filter = req.query.archived === 'true' ? { archived: true } : {};
   const pods = await Pod.find(filter).sort({ createdAt: -1 }).lean();
-  const header = 'GTR,SCT,Date Shipped,Date Received,Received By,Pallets,Total Litres,Archived\n';
-  const rows = pods.map(p => `"${p.gtr}","${p.sct}","${p.dateShipped}","${p.receivedDate}","${p.receivedBy}",${p.pallets},${p.totalLitres},${p.archived || false}`).join('\n');
+  const header = 'GTR,SCT,Date Shipped,Date Received,Received By,Pallets,Total Units,Archived\n';
+  const rows = pods.map(p => `"${p.gtr}","${p.sct}","${p.dateShipped}","${p.receivedDate}","${p.receivedBy}",${p.pallets},${p.totalUnits},${p.archived || false}`).join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="pods-export.csv"');
   res.send(header + rows);
@@ -355,11 +373,11 @@ app.get('/api/pods/export', auth,  async (req, res) => {
 // Export collection notes as CSV
 app.get('/api/collection-notes/export', auth, async (req, res) => {
   const notes = await Note.find().sort({ createdDate: -1 }).lean();
-  const header = 'Note ID,Period Start,Period End,Driver,Farm,PODs Count,Total Pallets,Total Litres,Created\n';
+  const header = 'Note ID,Period Start,Period End,Driver,Farm,PODs Count,Total Pallets,Total Units,Created\n';
   const rows = notes.map(n => {
     const tp = n.pods.reduce((s, p) => s + (p.pallets || 0), 0);
-    const tl = n.pods.reduce((s, p) => s + (p.totalLitres || 0), 0);
-    return `"${n.noteId}","${n.periodStart}","${n.periodEnd}","${n.driverName}","${n.farmDestination || ''}",${n.pods.length},${tp},${tl.toFixed(2)},"${n.createdDate}"`;
+    const tu = n.pods.reduce((s, p) => s + (p.totalUnits || 0), 0);
+    return `"${n.noteId}","${n.periodStart}","${n.periodEnd}","${n.driverName}","${n.farmDestination || ''}",${n.pods.length},${tp},${tu.toFixed(2)},"${n.createdDate}"`;
   }).join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="collection-notes-export.csv"');
@@ -387,7 +405,7 @@ app.post('/api/pod', auth, upload.single('photo'), async (req, res) => {
       receivedDate: req.body.receivedDate || new Date().toISOString().split('T')[0],
       receivedBy: req.body.receivedBy || '',
       pallets: parseInt(req.body.pallets) || 0,
-      totalLitres: parseFloat(req.body.totalLitres) || 0,
+      totalUnits: parseFloat(req.body.totalUnits) || 0,
       photo: req.file ? `uploads/${req.file.filename}` : null
     });
     res.json({ success: true, pod });
@@ -409,7 +427,7 @@ app.put('/api/pod/:podId', auth, upload.single('photo'), async (req, res) => {
       receivedDate: req.body.receivedDate || '',
       receivedBy: req.body.receivedBy || '',
       pallets: parseInt(req.body.pallets) || 0,
-      totalLitres: parseFloat(req.body.totalLitres) || 0
+      totalUnits: parseFloat(req.body.totalUnits) || 0
     };
     if (req.file) update.photo = `uploads/${req.file.filename}`;
     const pod = await Pod.findOneAndUpdate({ podId: req.params.podId }, update, { new: true }).lean();
@@ -424,16 +442,18 @@ app.delete('/api/pod/:podId', auth, async (req, res) => {
 });
 
 // Create collection note from selected PODs
-app.post('/api/collection-note', auth, async (req, res) => {
+app.post('/api/collection-note', auth, upload.single('manifestPhoto'), async (req, res) => {
   try {
-    const { podIds, driverName, vehicleInfo, farmDestination, accountantEmail,
-            driverSignature, periodStart, periodEnd } = req.body;
+    const podIds = JSON.parse(req.body.podIds || '[]');
+    const { driverName, vehicleInfo, farmDestination, accountantEmail,
+            driverSignature, periodStart, periodEnd, manifestNumber } = req.body;
     const selectedPods = await Pod.find({ podId: { $in: podIds } }).lean();
     if (selectedPods.length === 0) return res.status(400).json({ error: 'No PODs selected' });
 
     const note = await Note.create({
       pods: selectedPods, driverName, vehicleInfo, farmDestination,
-      accountantEmail, driverSignature, periodStart, periodEnd
+      accountantEmail, manifestNumber, driverSignature, periodStart, periodEnd,
+      manifestPhoto: req.file ? `uploads/${req.file.filename}` : null
     });
 
     await Pod.updateMany({ podId: { $in: podIds } }, { archived: true, collectionNoteId: note.noteId });

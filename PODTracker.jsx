@@ -9,13 +9,15 @@ function PODTracker() {
   const [success, setSuccess] = useState(null);
 
   // POD form
-  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
   const [podPhoto, setPodPhoto] = useState(null);
   const fileRef = useRef(null);
 
   // Collection note form
   const [selectedPodIds, setSelectedPodIds] = useState([]);
-  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '' });
+  const [manifestPhoto, setManifestPhoto] = useState(null);
+  const manifestFileRef = useRef(null);
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -38,7 +40,7 @@ function PODTracker() {
       if (podPhoto) fd.append('photo', podPhoto);
       const res = await fetch('/api/pod', { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Failed');
-      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
       setPodPhoto(null);
       if (fileRef.current) fileRef.current.value = '';
       await loadPods();
@@ -126,17 +128,32 @@ function PODTracker() {
     if (selectedPodIds.length === 0) { alert('Select at least one POD'); return; }
     if (!signature) { alert('Driver signature is required'); return; }
     if (!noteForm.driverName) { alert('Driver name is required'); return; }
+    if (!noteForm.manifestNumber) { alert('Manifest number is required'); return; }
+    if (!manifestPhoto) { alert('Manifest photo is required'); return; }
     setLoading(true);
     try {
+      const fd = new FormData();
+      fd.append('driverName', noteForm.driverName);
+      fd.append('vehicleInfo', noteForm.vehicleInfo);
+      fd.append('farmDestination', noteForm.farmDestination);
+      fd.append('accountantEmail', noteForm.accountantEmail);
+      fd.append('periodStart', noteForm.periodStart);
+      fd.append('periodEnd', noteForm.periodEnd);
+      fd.append('manifestNumber', noteForm.manifestNumber);
+      fd.append('podIds', JSON.stringify(selectedPodIds));
+      fd.append('driverSignature', signature);
+      fd.append('manifestPhoto', manifestPhoto);
+
       const res = await fetch('/api/collection-note', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...noteForm, podIds: selectedPodIds, driverSignature: signature })
+        body: fd
       });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setSelectedPodIds([]);
-      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '' });
+      setManifestPhoto(null);
+      if (manifestFileRef.current) manifestFileRef.current.value = '';
       setSignature(null);
       await loadNotes();
       flash('Collection Note created & emailed!');
@@ -178,14 +195,14 @@ function PODTracker() {
                 <thead><tr style={S.thead}>
                   <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th>
                   <th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th>
-                  <th style={S.th}>Litres</th><th style={S.th}>Photo</th><th style={S.th}></th>
+                  <th style={S.th}>Units</th><th style={S.th}>Photo</th><th style={S.th}></th>
                 </tr></thead>
                 <tbody>{pods.map(p => (
                   <tr key={p.podId} style={S.tr}>
                     <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td>
                     <td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
                     <td style={S.td}>{p.receivedBy}</td><td style={S.td}>{p.pallets}</td>
-                    <td style={S.td}>{p.totalLitres}L</td>
+                    <td style={S.td}>{p.totalUnits}</td>
                     <td style={S.td}>{p.photo ? '📷' : '—'}</td>
                     <td style={S.td}><button style={S.btnDel} onClick={() => deletePod(p.podId)}>✕</button></td>
                   </tr>
@@ -213,8 +230,8 @@ function PODTracker() {
               <input style={S.input} placeholder="Person who received" value={podForm.receivedBy} onChange={e => setPodForm({...podForm, receivedBy: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Pallets</label>
               <input style={S.input} type="number" min="0" value={podForm.pallets} onChange={e => setPodForm({...podForm, pallets: e.target.value})} /></div>
-            <div style={S.field}><label style={S.label}>Total Litres</label>
-              <input style={S.input} type="number" step="0.01" min="0" value={podForm.totalLitres} onChange={e => setPodForm({...podForm, totalLitres: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Total Units</label>
+              <input style={S.input} type="number" step="0.01" min="0" value={podForm.totalUnits} onChange={e => setPodForm({...podForm, totalUnits: e.target.value})} /></div>
           </div>
 
           <div style={{...S.field, marginTop: 16}}>
@@ -248,14 +265,14 @@ function PODTracker() {
                 <table style={S.table}>
                   <thead><tr style={S.thead}>
                     <th style={S.th}>✓</th><th style={S.th}>GTR</th><th style={S.th}>SCT</th>
-                    <th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Litres</th>
+                    <th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Units</th>
                   </tr></thead>
                   <tbody>{pods.map(p => (
                     <tr key={p.podId} style={{...S.tr, backgroundColor: selectedPodIds.includes(p.podId) ? '#dbeafe' : '#fff', cursor: 'pointer'}} onClick={() => togglePod(p.podId)}>
                       <td style={S.td}><input type="checkbox" checked={selectedPodIds.includes(p.podId)} readOnly /></td>
                       <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td>
                       <td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
-                      <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalLitres}L</td>
+                      <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalUnits}</td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -264,7 +281,7 @@ function PODTracker() {
                 <div style={S.totalsBox}>
                   <strong>Selected: </strong>{selectedPodIds.length} PODs | {' '}
                   {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.pallets||0), 0)} pallets | {' '}
-                  {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalLitres||0), 0).toFixed(2)}L
+                  {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalUnits||0), 0).toFixed(2)} units
                 </div>
               )}
             </div>
@@ -288,7 +305,20 @@ function PODTracker() {
           </div>
 
           <div style={S.divider}></div>
-          <h3 style={S.sub}>3. Driver Signature</h3>
+          <h3 style={S.sub}>3. Waste Collection Manifest</h3>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Manifest Number *</label>
+              <input style={S.input} placeholder="e.g. WCM-2024-001" value={noteForm.manifestNumber} onChange={e => setNoteForm({...noteForm, manifestNumber: e.target.value})} /></div>
+          </div>
+          <div style={{...S.field, marginTop: 16}}>
+            <label style={S.label}>Manifest Photo *</label>
+            <input ref={manifestFileRef} type="file" accept="image/*" capture="environment" style={S.input}
+              onChange={e => setManifestPhoto(e.target.files[0] || null)} />
+            {manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {manifestPhoto.name}</p>}
+          </div>
+
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>4. Driver Signature</h3>
           <p style={S.muted}>Sign below with your finger or mouse</p>
           <div style={{border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none'}}>
             <canvas ref={canvasRef} style={{display: 'block', borderRadius: 6}}

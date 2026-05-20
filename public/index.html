@@ -78,12 +78,13 @@ function MainApp({ user, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
   const [editingPod, setEditingPod] = useState(null);
   const [podPhoto, setPodPhoto] = useState(null);
   const fileRef = useRef(null);
   const [selectedPodIds, setSelectedPodIds] = useState([]);
-  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+  const manifestPhotoRef = useRef(null);
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -175,7 +176,7 @@ function MainApp({ user, onLogout }) {
 
   const startEdit = (pod) => {
     setEditingPod(pod.podId);
-    setPodForm({ gtr: pod.gtr, sct: pod.sct, dateShipped: pod.dateShipped, receivedDate: pod.receivedDate, receivedBy: pod.receivedBy, pallets: pod.pallets || '', totalLitres: pod.totalLitres || '' });
+    setPodForm({ gtr: pod.gtr, sct: pod.sct, dateShipped: pod.dateShipped, receivedDate: pod.receivedDate, receivedBy: pod.receivedBy, pallets: pod.pallets || '', totalUnits: pod.totalUnits || '' });
     setPodPhoto(null);
     setView('logpod');
   };
@@ -189,7 +190,7 @@ function MainApp({ user, onLogout }) {
         const q = [...offlineQueue, { ...podForm }];
         localStorage.setItem('pod_offline_queue', JSON.stringify(q));
         setOfflineQueue(q);
-        setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+        setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
         setDupWarning(null);
         flash('POD saved offline. Will sync when back online.');
         setView('dashboard');
@@ -203,7 +204,7 @@ function MainApp({ user, onLogout }) {
       const method = editingPod ? 'PUT' : 'POST';
       const res = await api(url, { method, body: fd });
       if (!res.ok) throw new Error('Failed');
-      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' });
+      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
       setPodPhoto(null);
       setEditingPod(null);
       setDupWarning(null);
@@ -220,6 +221,7 @@ function MainApp({ user, onLogout }) {
         setView('dashboard');
       } else { setError(e.message); }
     }
+    finally { setLoading(false); }
     finally { setLoading(false); }
   };
 
@@ -291,16 +293,30 @@ function MainApp({ user, onLogout }) {
     if (selectedPodIds.length === 0) { alert('Select at least one POD'); return; }
     if (!signature) { alert('Driver signature is required'); return; }
     if (!noteForm.driverName) { alert('Driver name is required'); return; }
+    if (!noteForm.manifestNumber) { alert('Manifest number is required'); return; }
+    if (!noteForm.manifestPhoto) { alert('Manifest photo is required'); return; }
     setLoading(true);
     try {
+      const fd = new FormData();
+      fd.append('driverName', noteForm.driverName);
+      fd.append('vehicleInfo', noteForm.vehicleInfo);
+      fd.append('farmDestination', noteForm.farmDestination);
+      fd.append('accountantEmail', noteForm.accountantEmail);
+      fd.append('periodStart', noteForm.periodStart);
+      fd.append('periodEnd', noteForm.periodEnd);
+      fd.append('manifestNumber', noteForm.manifestNumber);
+      fd.append('manifestPhoto', noteForm.manifestPhoto);
+      fd.append('driverSignature', signature);
+      fd.append('podIds', JSON.stringify(selectedPodIds));
       const res = await api('/api/collection-note', {
         method: 'POST',
-        body: JSON.stringify({ ...noteForm, podIds: selectedPodIds, driverSignature: signature })
+        body: fd
       });
       if (!res.ok) throw new Error('Failed');
       setSelectedPodIds([]);
-      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '' });
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
       setSignature(null);
+      if (manifestPhotoRef.current) manifestPhotoRef.current.value = '';
       await loadPods(); await loadNotes(); loadStats();
       flash('Collection Note created and emailed! PODs have been archived.');
       setView('dashboard');
@@ -338,7 +354,7 @@ function MainApp({ user, onLogout }) {
 
       <div style={S.nav}>
         <button style={view === 'dashboard' ? S.navActive : S.navBtn} onClick={() => { setView('dashboard'); setShowArchived(false); loadPods(); loadStats(); }}>Dashboard</button>
-        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalLitres: '' }); }}>Log POD</button>
+        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' }); }}>Log POD</button>
         <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Create Note</button>
         <button style={view === 'history' ? S.navActive : S.navBtn} onClick={() => setView('history')}>History</button>
         {user.role === 'admin' && <button style={view === 'admin' ? S.navActive : S.navBtn} onClick={() => { setView('admin'); loadUsers(); }}>Users</button>}
@@ -350,7 +366,7 @@ function MainApp({ user, onLogout }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
             <div style={S.statCard}><div style={S.statNum}>{stats.activePods || 0}</div><div style={S.statLabel}>Active PODs</div></div>
             <div style={S.statCard}><div style={S.statNum}>{stats.activePallets || 0}</div><div style={S.statLabel}>Pallets (Active)</div></div>
-            <div style={S.statCard}><div style={S.statNum}>{(stats.activeLitres || 0).toFixed(0)}L</div><div style={S.statLabel}>Litres (Active)</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{(stats.activeUnits || 0).toFixed(0)}</div><div style={S.statLabel}>Units (Active)</div></div>
             <div style={S.statCard}><div style={S.statNum}>{stats.totalNotes || 0}</div><div style={S.statLabel}>Collection Notes</div></div>
           </div>
 
@@ -375,12 +391,12 @@ function MainApp({ user, onLogout }) {
             {pods.length === 0 ? <p style={S.muted}>{showArchived ? 'No archived PODs.' : 'No PODs logged yet.'}</p> : (
               <div style={S.tableWrap}><table style={S.table}>
                 <thead><tr style={S.thead}>
-                  <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th><th style={S.th}>Litres</th><th style={S.th}>Photo</th><th style={S.th}></th>
+                  <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th><th style={S.th}>Units</th><th style={S.th}>Photo</th><th style={S.th}></th>
                 </tr></thead>
                 <tbody>{pods.map(p => (
                   <tr key={p.podId} style={S.tr}>
                     <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td><td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
-                    <td style={S.td}>{p.receivedBy}</td><td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalLitres}L</td>
+                    <td style={S.td}>{p.receivedBy}</td><td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalUnits}</td>
                     <td style={S.td}>{p.photo ? <button style={S.btnLink} onClick={() => setPhotoModal('/' + p.photo)}>View</button> : '-'}</td>
                     <td style={S.td}>
                       <div style={{ display: 'flex', gap: 4 }}>
@@ -407,7 +423,7 @@ function MainApp({ user, onLogout }) {
             <div style={S.field}><label style={S.label}>Date Received</label><input style={S.input} type="date" value={podForm.receivedDate} onChange={e => setPodForm({...podForm, receivedDate: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Received By</label><input style={S.input} placeholder="Person who received" value={podForm.receivedBy} onChange={e => setPodForm({...podForm, receivedBy: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Pallets</label><input style={S.input} type="number" min="0" value={podForm.pallets} onChange={e => setPodForm({...podForm, pallets: e.target.value})} /></div>
-            <div style={S.field}><label style={S.label}>Total Litres</label><input style={S.input} type="number" step="0.01" min="0" value={podForm.totalLitres} onChange={e => setPodForm({...podForm, totalLitres: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Total Units</label><input style={S.input} type="number" step="0.01" min="0" value={podForm.totalUnits} onChange={e => setPodForm({...podForm, totalUnits: e.target.value})} /></div>
           </div>
           {dupWarning && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginTop: 12, fontSize: 13, fontWeight: 500 }}>{dupWarning}</div>}
           <div style={{...S.field, marginTop: 16}}>
@@ -432,19 +448,19 @@ function MainApp({ user, onLogout }) {
               <button style={S.btnSm} onClick={selectAll}>{selectedPodIds.length === pods.length ? 'Deselect All' : 'Select All'}</button>
               <div style={{...S.tableWrap, marginTop: 8}}><table style={S.table}>
                 <thead><tr style={S.thead}>
-                  <th style={S.th}>Sel</th><th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Litres</th>
+                  <th style={S.th}>Sel</th><th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Units</th>
                 </tr></thead>
                 <tbody>{pods.map(p => (
                   <tr key={p.podId} style={{...S.tr, backgroundColor: selectedPodIds.includes(p.podId) ? '#dbeafe' : '#fff', cursor: 'pointer'}} onClick={() => togglePod(p.podId)}>
                     <td style={S.td}><input type="checkbox" checked={selectedPodIds.includes(p.podId)} readOnly /></td>
                     <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td><td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
-                    <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalLitres}L</td>
+                    <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalUnits}</td>
                   </tr>
                 ))}</tbody>
               </table></div>
               {selectedPodIds.length > 0 && (
                 <div style={S.totalsBox}>
-                  <strong>Selected: </strong>{selectedPodIds.length} PODs | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.pallets||0), 0)} pallets | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalLitres||0), 0).toFixed(2)}L
+                  <strong>Selected: </strong>{selectedPodIds.length} PODs | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.pallets||0), 0)} pallets | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalUnits||0), 0).toFixed(2)} units
                 </div>
               )}
             </div>
@@ -460,7 +476,13 @@ function MainApp({ user, onLogout }) {
             <div style={S.field}><label style={S.label}>Accountant Email</label><input style={S.input} type="email" placeholder="accountant@email.com" value={noteForm.accountantEmail} onChange={e => setNoteForm({...noteForm, accountantEmail: e.target.value})} /></div>
           </div>
           <div style={S.divider}></div>
-          <h3 style={S.sub}>3. Driver Signature</h3>
+          <h3 style={S.sub}>3. Waste Collection Manifest</h3>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Manifest Number *</label><input style={S.input} placeholder="e.g. WCM-2026-001" value={noteForm.manifestNumber} onChange={e => setNoteForm({...noteForm, manifestNumber: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Manifest Photo *</label><input ref={manifestPhotoRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setNoteForm({...noteForm, manifestPhoto: e.target.files[0] || null})} />{noteForm.manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {noteForm.manifestPhoto.name}</p>}</div>
+          </div>
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>4. Driver Signature</h3>
           <p style={S.muted}>Sign below with your finger or mouse</p>
           <div style={{border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none'}}>
             <canvas ref={canvasRef} style={{display: 'block', borderRadius: 6}}
@@ -490,7 +512,7 @@ function MainApp({ user, onLogout }) {
               <div key={n.noteId} style={S.noteCard}>
                 <div style={{ marginBottom: 8 }}>
                   <p style={{margin: '0 0 4px', fontWeight: 600}}>{n.periodStart} to {n.periodEnd}</p>
-                  <p style={S.muted}>{n.pods.length} PODs | {n.pods.reduce((s,p) => s + (p.pallets||0), 0)} pallets | {n.pods.reduce((s,p) => s + (p.totalLitres||0), 0).toFixed(2)}L</p>
+                  <p style={S.muted}>{n.pods.length} PODs | {n.pods.reduce((s,p) => s + (p.pallets||0), 0)} pallets | {n.pods.reduce((s,p) => s + (p.totalUnits||0), 0).toFixed(2)} units</p>
                   <p style={S.muted}>Driver: {n.driverName} | Farm: {n.farmDestination || 'N/A'}</p>
                   {n.emailStatus && n.emailStatus.length > 0 && (
                     <div style={{ marginTop: 4 }}>
