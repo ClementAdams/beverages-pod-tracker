@@ -83,7 +83,7 @@ function MainApp({ user, onLogout }) {
   const [podPhoto, setPodPhoto] = useState(null);
   const fileRef = useRef(null);
   const [selectedPodIds, setSelectedPodIds] = useState([]);
-  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
   const manifestPhotoRef = useRef(null);
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
@@ -314,7 +314,7 @@ function MainApp({ user, onLogout }) {
       });
       if (!res.ok) throw new Error('Failed');
       setSelectedPodIds([]);
-      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
       setSignature(null);
       if (manifestPhotoRef.current) manifestPhotoRef.current.value = '';
       await loadPods(); await loadNotes(); loadStats();
