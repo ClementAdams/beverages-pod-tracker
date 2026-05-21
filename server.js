@@ -524,7 +524,7 @@ app.get('/api/test-email', async (req, res) => {
 // ─── Start ────────────────────────────────────────────────────
 
 // Destruction certificate routes
-app.post('/api/destruction-cert', auth, async (req, res) => {
+app.post('/api/destruction-cert', auth, upload.none(), async (req, res) => {
   try {
     const cert = await DestructionCert.create({
       collectionNoteNo: req.body.collectionNoteNo || '',

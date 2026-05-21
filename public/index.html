@@ -402,7 +402,7 @@ function MainApp({ user, onLogout }) {
         <button style={view === 'dashboard' ? S.navActive : S.navBtn} onClick={() => { setView('dashboard'); setShowArchived(false); loadPods(); loadStats(); }}>Dashboard</button>
         <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm(emptyPod); }}>Log POD</button>
         <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Create Note</button>
-        <button style={view === 'cert' ? S.navActive : S.navBtn} onClick={() => { setView('cert'); initCertCanvas(); }}>Destroy Cert</button>
+        <button style={view === 'cert' ? S.navActive : S.navBtn} onClick={() => { setView('cert'); initCertCanvas(); }}>Destruction Certificate</button>
         <button style={view === 'history' ? S.navActive : S.navBtn} onClick={() => { setView('history'); loadNotes(); loadCerts(); }}>History</button>
         {user.role === 'admin' && <button style={view === 'admin' ? S.navActive : S.navBtn} onClick={() => { setView('admin'); loadUsers(); }}>Users</button>}
       </div>
