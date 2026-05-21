@@ -297,6 +297,7 @@ function MainApp({ user, onLogout }) {
     if (!noteForm.manifestPhoto) { alert('Manifest photo is required'); return; }
     setLoading(true);
     try {
+      const collectionNoteNo = nextNoteSeq.toString();
       const fd = new FormData();
       fd.append('driverName', noteForm.driverName);
       fd.append('vehicleInfo', noteForm.vehicleInfo);
@@ -308,16 +309,20 @@ function MainApp({ user, onLogout }) {
       fd.append('manifestPhoto', noteForm.manifestPhoto);
       fd.append('driverSignature', signature);
       fd.append('podIds', JSON.stringify(selectedPodIds));
+      fd.append('collectionNoteNo', collectionNoteNo);
       const res = await api('/api/collection-note', {
         method: 'POST',
         body: fd
       });
       if (!res.ok) throw new Error('Failed');
       setSelectedPodIds([]);
-      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', farmEmail: '', myEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
       setSignature(null);
       if (manifestPhotoRef.current) manifestPhotoRef.current.value = '';
       await loadPods(); await loadNotes(); loadStats();
+      const newSeq = nextNoteSeq + 1;
+      setNextNoteSeq(newSeq);
+      localStorage.setItem('nextNoteSeq', newSeq.toString());
       flash('Collection Note created and emailed! PODs have been archived.');
       setView('dashboard');
     } catch (e) { setError(e.message); }
@@ -474,6 +479,8 @@ function MainApp({ user, onLogout }) {
             <div style={S.field}><label style={S.label}>Vehicle Info</label><input style={S.input} placeholder="License plate" value={noteForm.vehicleInfo} onChange={e => setNoteForm({...noteForm, vehicleInfo: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Farm / Destination</label><input style={S.input} placeholder="Farm name" value={noteForm.farmDestination} onChange={e => setNoteForm({...noteForm, farmDestination: e.target.value})} /></div>
             <div style={S.field}><label style={S.label}>Accountant Email</label><input style={S.input} type="email" placeholder="accountant@email.com" value={noteForm.accountantEmail} onChange={e => setNoteForm({...noteForm, accountantEmail: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Farm Email</label><input style={S.input} type="email" placeholder="farm@email.com" value={noteForm.farmEmail} onChange={e => setNoteForm({...noteForm, farmEmail: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>My Email</label><input style={S.input} type="email" placeholder="my@email.com" value={noteForm.myEmail} onChange={e => setNoteForm({...noteForm, myEmail: e.target.value})} /></div>
           </div>
           <div style={S.divider}></div>
           <h3 style={S.sub}>3. Waste Collection Manifest</h3>
