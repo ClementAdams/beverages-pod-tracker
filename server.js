@@ -81,9 +81,23 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+const certSchema = new mongoose.Schema({
+  certId: { type: String, default: () => uuidv4(), unique: true },
+  collectionNoteNo: String,
+  tankerCount: Number,
+  itemsReceived: String,
+  destructionDate: String,
+  weighbridgeNo: String,
+  weightDestroyed: Number,
+  signerName: String,
+  certSignature: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
 const Pod = mongoose.model('Pod', podSchema);
 const Note = mongoose.model('Note', noteSchema);
 const User = mongoose.model('User', userSchema);
+const DestructionCert = mongoose.model('DestructionCert', certSchema);
 
 // Create default admin if none exists
 mongoose.connection.once('open', async () => {
