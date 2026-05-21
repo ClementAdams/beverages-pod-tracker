@@ -400,8 +400,8 @@ function MainApp({ user, onLogout }) {
 
       <div style={S.nav}>
         <button style={view === 'dashboard' ? S.navActive : S.navBtn} onClick={() => { setView('dashboard'); setShowArchived(false); loadPods(); loadStats(); }}>Dashboard</button>
-        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm(emptyPod); }}>Log POD</button>
-        <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Create Note</button>
+        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm(emptyPod); }}>POD Capturing</button>
+        <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Collection Note</button>
         <button style={view === 'cert' ? S.navActive : S.navBtn} onClick={() => { setView('cert'); initCertCanvas(); }}>Destruction Certificate</button>
         <button style={view === 'history' ? S.navActive : S.navBtn} onClick={() => { setView('history'); loadNotes(); loadCerts(); }}>History</button>
         {user.role === 'admin' && <button style={view === 'admin' ? S.navActive : S.navBtn} onClick={() => { setView('admin'); loadUsers(); }}>Users</button>}
@@ -450,7 +450,7 @@ function MainApp({ user, onLogout }) {
 
       {view === 'logpod' && (
         <div style={S.card}>
-          <h2 style={S.heading}>{editingPod ? 'Edit POD' : 'Log Received POD'}</h2>
+          <h2 style={S.heading}>{editingPod ? 'Edit POD' : 'POD Capturing'}</h2>
           <div style={S.grid2}>
             <div style={S.field}><label style={S.label}>GTR Reference *</label><input style={S.input} placeholder="e.g. DM0101423" value={podForm.gtr} onChange={e => setPodForm({...podForm, gtr: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
             <div style={S.field}><label style={S.label}>SCT Number *</label><input style={S.input} placeholder="e.g. 521406" value={podForm.sct} onChange={e => setPodForm({...podForm, sct: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
@@ -475,7 +475,7 @@ function MainApp({ user, onLogout }) {
 
       {view === 'create' && (
         <div style={S.card}>
-          <h2 style={S.heading}>Create Collection Note</h2>
+          <h2 style={S.heading}>Collection Note</h2>
           <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
             <p style={{ fontSize: 13, color: '#1d4ed8', fontWeight: 600, margin: 0 }}>Next Collection Note #: {nextNoteSeq}</p>
           </div>
