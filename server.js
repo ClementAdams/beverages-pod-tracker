@@ -102,12 +102,22 @@ const DestructionCert = mongoose.model('DestructionCert', certSchema);
 
 // Create default admin if none exists
 mongoose.connection.once('open', async () => {
-  const count = await User.countDocuments();
-  if (count === 0) {
-    const hash = await bcrypt.hash('admin123', 10);
-    await User.create({ username: 'admin', password: hash, role: 'admin' });
-    console.log('Default admin created: admin / admin123');
+  const defaultUsers = [
+    { username: 'admin', password: 'admin123',   role: 'admin' },
+    { username: 'lucia', password: 'Lucia@2026',  role: 'admin' },
+    { username: 'clem',  password: 'Clem@2026',   role: 'admin' },
+    { username: 'osdam', password: 'Osdam@2026',  role: 'farm'  },
+    { username: 'Chill', password: 'password123', role: 'crew'  },
+  ];
+  for (const u of defaultUsers) {
+    const existing = await User.findOne({ username: u.username });
+    if (!existing) {
+      const hash = await bcrypt.hash(u.password, 10);
+      await User.create({ username: u.username, password: hash, role: u.role });
+      console.log('Created user:', u.username);
+    }
   }
+  console.log('User setup complete');
 });
 
 // Auth middleware
