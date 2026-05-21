@@ -83,7 +83,7 @@ function MainApp({ user, onLogout }) {
   const [podPhoto, setPodPhoto] = useState(null);
   const fileRef = useRef(null);
   const [selectedPodIds, setSelectedPodIds] = useState([]);
-  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', farmEmail: '', myEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
   const manifestPhotoRef = useRef(null);
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
@@ -221,7 +221,6 @@ function MainApp({ user, onLogout }) {
         setView('dashboard');
       } else { setError(e.message); }
     }
-    finally { setLoading(false); }
     finally { setLoading(false); }
   };
 
