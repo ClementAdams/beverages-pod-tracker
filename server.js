@@ -69,6 +69,7 @@ const noteSchema = new mongoose.Schema({
   driverSignature: String,
   periodStart: String,
   periodEnd: String,
+  collectionNoteNo: String,
   createdDate: { type: Date, default: Date.now },
   emailStatus: [{ to: String, sent: Boolean, error: String, sentAt: Date }]
 });
@@ -446,13 +447,13 @@ app.post('/api/collection-note', auth, upload.single('manifestPhoto'), async (re
   try {
     const podIds = JSON.parse(req.body.podIds || '[]');
     const { driverName, vehicleInfo, farmDestination, accountantEmail,
-            driverSignature, periodStart, periodEnd, manifestNumber } = req.body;
+            driverSignature, periodStart, periodEnd, manifestNumber, collectionNoteNo } = req.body;
     const selectedPods = await Pod.find({ podId: { $in: podIds } }).lean();
     if (selectedPods.length === 0) return res.status(400).json({ error: 'No PODs selected' });
 
     const note = await Note.create({
       pods: selectedPods, driverName, vehicleInfo, farmDestination,
-      accountantEmail, manifestNumber, driverSignature, periodStart, periodEnd,
+      accountantEmail, manifestNumber, driverSignature, periodStart, periodEnd, collectionNoteNo,
       manifestPhoto: req.file ? `uploads/${req.file.filename}` : null
     });
 
@@ -521,6 +522,37 @@ app.get('/api/test-email', async (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────
+
+// Destruction certificate routes
+app.post('/api/destruction-cert', auth, async (req, res) => {
+  try {
+    const cert = await DestructionCert.create({
+      collectionNoteNo: req.body.collectionNoteNo || '',
+      tankerCount: parseFloat(req.body.tankerCount) || 0,
+      itemsReceived: req.body.itemsReceived || '',
+      destructionDate: req.body.destructionDate || '',
+      weighbridgeNo: req.body.weighbridgeNo || '',
+      weightDestroyed: parseFloat(req.body.weightDestroyed) || 0,
+      signerName: req.body.signerName || 'J.C.F. Beukes',
+      certSignature: req.body.certSignature || ''
+    });
+    res.json({ success: true, certId: cert.certId });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.get('/api/destruction-certs', auth, async (req, res) => {
+  const certs = await DestructionCert.find().sort({ createdAt: -1 }).lean();
+  res.json(certs);
+});
+
+app.get('/api/destruction-cert/:certId/pdf', auth, async (req, res) => {
+  const cert = await DestructionCert.findOne({ certId: req.params.certId }).lean();
+  if (!cert) return res.status(404).json({ error: 'Not found' });
+  const pdfBuffer = await generateDestructionCertPDF(cert);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="destruction-cert-${cert.certId}.pdf"`);
+  res.send(pdfBuffer);
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`POD Tracking Server running on port ${PORT}`));
