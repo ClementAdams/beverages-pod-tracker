@@ -413,7 +413,7 @@ function MainApp({ user, onLogout }) {
         </div>
       </header>
 
-      {!isOnline && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600 }}>Offline mode — PODs will be saved locally and synced when back online</div>}
+      {!isOnline && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600 }}>Offline mode - PODs will be saved locally and synced when back online</div>}
       {offlineQueue.length > 0 && <div style={{ backgroundColor: '#e0e7ff', color: '#3730a3', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{offlineQueue.length} POD(s) queued offline {isOnline && <button style={S.btnSm} onClick={syncOfflineQueue}>Sync Now</button>}</div>}
       {error && <div style={S.errorBanner}>{error}<button style={S.closeBtn} onClick={() => setError(null)}>x</button></div>}
       {success && <div style={S.successBanner}>{success}</div>}
@@ -427,7 +427,7 @@ function MainApp({ user, onLogout }) {
         {user.role === 'admin' && <button style={view === 'admin' ? S.navActive : S.navBtn} onClick={() => { setView('admin'); loadUsers(); }}>Users</button>}
       </div>
 
-      {/* ─── DASHBOARD ─── */}
+      {/* --- DASHBOARD --- */}
       {view === 'dashboard' && (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
@@ -479,7 +479,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── LOG / EDIT POD ─── */}
+      {/* --- LOG / EDIT POD --- */}
       {view === 'logpod' && (
         <div style={S.card}>
           <h2 style={S.heading}>{editingPod ? 'Edit POD' : 'Log Received POD'}</h2>
@@ -505,7 +505,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── CREATE COLLECTION NOTE ─── */}
+      {/* --- CREATE COLLECTION NOTE --- */}
       {view === 'create' && (
         <div style={S.card}>
           <h2 style={S.heading}>Create Collection Note</h2>
@@ -566,11 +566,11 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── DESTRUCTION CERTIFICATE ─── */}
+      {/* --- DESTRUCTION CERTIFICATE --- */}
       {view === 'cert' && (
         <div style={S.card}>
           <div style={{ textAlign: 'center', borderBottom: '2px solid #e5e7eb', paddingBottom: 20, marginBottom: 20 }}>
-            <div style={{ fontSize: 48, marginBottom: 4 }}>🌿</div>
+            <div style={{ fontSize: 48, marginBottom: 4 }}></div>
             <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 2, color: '#1a1a1a' }}>OSDAM ECO FACILITY</div>
             <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Patrysfontein, Durbanville</div>
             <div style={{ fontSize: 12, color: '#666' }}>Registration Number: 2014/166690/07</div>
@@ -607,7 +607,7 @@ function MainApp({ user, onLogout }) {
 
           <div style={S.divider}></div>
           <h3 style={S.sub}>Signature</h3>
-          <p style={{ ...S.muted, marginBottom: 8 }}>Manager of Osdam Boerdery, Patrysfontein — sign below</p>
+          <p style={{ ...S.muted, marginBottom: 8 }}>Manager of Osdam Boerdery, Patrysfontein - sign below</p>
           <div style={{ border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none' }}>
             <canvas ref={certCanvasRef} style={{ display: 'block', borderRadius: 6 }}
               onMouseDown={startCertDraw} onMouseMove={doCertDraw} onMouseUp={stopCertDraw} onMouseLeave={stopCertDraw}
@@ -622,7 +622,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── HISTORY ─── */}
+      {/* --- HISTORY --- */}
       {view === 'history' && (
         <div style={S.card}>
           <div style={S.row}>
@@ -677,7 +677,7 @@ function MainApp({ user, onLogout }) {
                 <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#16a34a', letterSpacing: 1 }}>DESTRUCTION CERTIFICATE</p>
                 {c.collectionNoteNo && <p style={{ margin: '0 0 4px', fontWeight: 600 }}>Collection Note #{c.collectionNoteNo}</p>}
                 <p style={S.muted}>Date: {c.destructionDate} | Weight: {c.weightDestroyed} kg | Weighbridge: {c.weighbridgeNo}</p>
-                <p style={S.muted}>{c.tankerCount}x Tank — {c.itemsReceived}</p>
+                <p style={S.muted}>{c.tankerCount}x Tank - {c.itemsReceived}</p>
                 <p style={S.muted}>Signed: {c.signerName}</p>
               </div>
               <button style={S.btnPrimary} onClick={() => downloadCertPdf(c.certId)}>Download Certificate PDF</button>
@@ -686,7 +686,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── ADMIN: USERS ─── */}
+      {/* --- ADMIN: USERS --- */}
       {view === 'admin' && user.role === 'admin' && (
         <div style={S.card}>
           <h2 style={S.heading}>User Management</h2>
@@ -714,7 +714,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── PHOTO MODAL ─── */}
+      {/* --- PHOTO MODAL --- */}
       {photoModal && (
         <div className="modal-overlay" onClick={() => setPhotoModal(null)}>
           <div className="photo-modal" onClick={e => e.stopPropagation()}>
@@ -724,7 +724,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── CHANGE PASSWORD MODAL ─── */}
+      {/* --- CHANGE PASSWORD MODAL --- */}
       {pwModal && (
         <div className="modal-overlay" onClick={() => setPwModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -740,7 +740,7 @@ function MainApp({ user, onLogout }) {
         </div>
       )}
 
-      {/* ─── RESEND EMAIL MODAL ─── */}
+      {/* --- RESEND EMAIL MODAL --- */}
       {resendModal && (
         <div className="modal-overlay" onClick={() => setResendModal(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
