@@ -76,7 +76,7 @@ function MainApp({ user, onLogout }) {
   const [notes, setNotes] = useState([]);
   const [certs, setCerts] = useState([]);
   const [stats, setStats] = useState({});
-  const [loading, setLoading] = useState(false);
+  
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
@@ -666,7 +666,6 @@ function MainApp({ user, onLogout }) {
           )}
         </div>
       )}
-
 
       {/* Destruction Certs in History */}
       {view === 'history' && certs.length > 0 && (
