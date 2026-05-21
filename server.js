@@ -152,11 +152,18 @@ function generateCollectionPDF(note) {
     doc.on('error', reject);
 
     // Header
+    doc.fontSize(14).font('Helvetica-Bold').text('JOHENCAR TRANSPORT AND RECYCLING', { align: 'center' });
+    doc.fontSize(10).font('Helvetica').text('Beverage Waste Collection Services', { align: 'center' });
+    doc.moveDown(0.3);
     doc.fontSize(22).font('Helvetica-Bold').text('COLLECTION NOTE', { align: 'center' });
     doc.moveDown(0.3);
     doc.fontSize(10).font('Helvetica').text(`Note ID: ${note.noteId}`, { align: 'center' });
     doc.text(`Date Created: ${new Date(note.createdDate).toLocaleDateString()}`, { align: 'center' });
     doc.text(`Period: ${note.periodStart || ''} to ${note.periodEnd || ''}`, { align: 'center' });
+    if (note.collectionNoteNo) {
+      doc.fontSize(12).font('Helvetica-Bold').text(`Collection Note #: ${note.collectionNoteNo}`, { align: 'center' });
+      doc.fontSize(10).font('Helvetica');
+    }
     if (note.manifestNumber) {
       doc.text(`Manifest Number: ${note.manifestNumber}`, { align: 'center' });
     }
