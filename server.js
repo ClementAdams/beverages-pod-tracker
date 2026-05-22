@@ -157,7 +157,7 @@ function generateCollectionPDF(note) {
     doc.moveDown(0.3);
     doc.fontSize(22).font('Helvetica-Bold').text('COLLECTION NOTE', { align: 'center' });
     doc.moveDown(0.3);
-    doc.fontSize(14).font('Helvetica-Bold').text(`Collection Note: ${note.collectionNoteNo || 'COL065'}`, { align: 'center' });
+    doc.fontSize(14).font('Helvetica-Bold').text(`Collection Note: ${note.collectionNoteNo || 'COL064'}`, { align: 'center' });
     doc.fontSize(10).font('Helvetica');
     doc.text(`Date Created: ${new Date(note.createdDate).toLocaleDateString()}`, { align: 'center' });
     doc.text(`Period: ${note.periodStart || ''} to ${note.periodEnd || ''}`, { align: 'center' });
