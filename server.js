@@ -173,10 +173,11 @@ function generateCollectionPDF(note) {
     doc.fontSize(14).font('Helvetica-Bold').text('PODs Received');
     doc.moveDown(0.5);
 
-    const colX = [40, 130, 210, 300, 380, 440, 510];
-    const headers = ['GTR', 'SCT', 'Shipped', 'Received', 'Pallets', 'Units', 'Received By'];
+    const colX = [40, 125, 205, 285, 370, 420, 478];
+    const headers = ['GTR', 'SCT', 'Date Shipped', 'Date Received', 'Pallets', 'Units', 'Received By'];
     doc.fontSize(8).font('Helvetica-Bold');
-    headers.forEach((h, i) => doc.text(h, colX[i], doc.y, { width: 70, continued: i < headers.length - 1 }));
+    const colW = [80, 75, 75, 80, 45, 53, 80];
+    headers.forEach((h, i) => doc.text(h, colX[i], doc.y, { width: colW[i], continued: i < headers.length - 1 }));
     doc.text('');
     let y = doc.y + 2;
     doc.moveTo(40, y).lineTo(570, y).stroke();
@@ -185,13 +186,13 @@ function generateCollectionPDF(note) {
     doc.font('Helvetica').fontSize(8);
     note.pods.forEach(p => {
       if (y > 700) { doc.addPage(); y = 40; }
-      doc.text(p.gtr || '-', colX[0], y, { width: 85 });
-      doc.text(p.sct || '-', colX[1], y, { width: 75 });
-      doc.text(p.dateShipped || '-', colX[2], y, { width: 85 });
-      doc.text(p.receivedDate || '-', colX[3], y, { width: 75 });
-      doc.text(String(p.pallets || 0), colX[4], y, { width: 55 });
-      doc.text(`${p.totalUnits || 0}`, colX[5], y, { width: 65 });
-      doc.text(p.receivedBy || '-', colX[6], y, { width: 60 });
+      doc.text(p.gtr || '-', colX[0], y, { width: colW[0] });
+      doc.text(p.sct || '-', colX[1], y, { width: colW[1] });
+      doc.text(p.dateShipped || '-', colX[2], y, { width: colW[2] });
+      doc.text(p.receivedDate || '-', colX[3], y, { width: colW[3] });
+      doc.text(String(p.pallets || 0), colX[4], y, { width: colW[4] });
+      doc.text(String(p.totalUnits || 0), colX[5], y, { width: colW[5] });
+      doc.text(p.receivedBy || '-', colX[6], y, { width: colW[6] });
       y += 18;
     });
 
@@ -214,7 +215,7 @@ function generateCollectionPDF(note) {
     doc.text(`Driver Name: ${note.driverName || '_________________'}`, 40, y);
     doc.text(`Vehicle: ${note.vehicleInfo || '_________________'}`, 300, y);
     y += 20;
-    doc.text(`Farm / Destination: ${note.farmDestination || '_________________'}`, 40, y);
+    doc.text(`Farm / Destination: ${note.farmDestination || 'Osdam Farm'}`, 40, y);
 
     // Signature
     if (note.driverSignature) {
