@@ -59,7 +59,6 @@ const podSchema = new mongoose.Schema({
 
 const noteSchema = new mongoose.Schema({
   noteId: { type: String, default: () => uuidv4(), unique: true },
-  deliveryNoteNumber: { type: Number, unique: true }, // NEW: Sequential delivery note number
   pods: [mongoose.Schema.Types.Mixed],
   driverName: String,
   vehicleInfo: String,
@@ -67,17 +66,13 @@ const noteSchema = new mongoose.Schema({
   accountantEmail: String,
   manifestNumber: String,
   manifestPhoto: String,
-  wasteManifestPhoto: String, // NEW: Photo for waste manifest
   driverSignature: String,
   periodStart: String,
   periodEnd: String,
   collectionNoteNo: String,
   farmName: String,
   createdDate: { type: Date, default: Date.now },
-  emailStatus: [{ to: String, sent: Boolean, error: String, sentAt: Date }],
-  sendAttempts: { type: Number, default: 0 }, // NEW: Track send attempts
-  lastSendError: String, // NEW: Store last error message
-  sendStatus: { type: String, default: 'pending', enum: ['pending', 'sent', 'failed'] } // NEW: Send status
+  emailStatus: [{ to: String, sent: Boolean, error: String, sentAt: Date }]
 });
 
 const userSchema = new mongoose.Schema({
@@ -142,12 +137,6 @@ function adminOnly(req, res, next) {
 
 // ─── Email ────────────────────────────────────────────────────
 
-// NEW: Get next delivery note number (starts at 65)
-async function getNextDeliveryNoteNumber() {
-  const lastNote = await Note.findOne().sort({ deliveryNoteNumber: -1 }).lean();
-  return (lastNote?.deliveryNoteNumber || 64) + 1; // Start at 65
-}
-
 function getResend() {
   const key = process.env.RESEND_API_KEY;
   if (!key) return null;
@@ -168,10 +157,6 @@ function generateCollectionPDF(note) {
     doc.moveDown(0.3);
     doc.fontSize(22).font('Helvetica-Bold').text('COLLECTION NOTE', { align: 'center' });
     doc.moveDown(0.3);
-    // NEW: Show delivery note number if available
-    if (note.deliveryNoteNumber) {
-      doc.fontSize(14).font('Helvetica-Bold').text(`Delivery Note #${note.deliveryNoteNumber}`, { align: 'center' });
-    }
     doc.fontSize(14).font('Helvetica-Bold').text(`Collection Note: ${note.collectionNoteNo || 'COL064'}`, { align: 'center' });
     doc.fontSize(10).font('Helvetica');
     doc.text(`Date Created: ${new Date(note.createdDate).toLocaleDateString()}`, { align: 'center' });
@@ -369,67 +354,6 @@ app.put('/api/change-password', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// NEW: Admin-only endpoint to see all user passwords (for admins who forget)
-app.get('/api/admin/users-with-passwords', auth, adminOnly, async (req, res) => {
-  try {
-    const users = await User.find().lean();
-    
-    // Get all default users with their plain text passwords (they're stored in code)
-    const defaultUsers = [
-      { username: 'admin', password: 'admin123' },
-      { username: 'lucia', password: 'Lucia@2026' },
-      { username: 'clem', password: 'Clem@2026' },
-      { username: 'osdam', password: 'Osdam@2026' },
-      { username: 'Chill', password: 'password123' }
-    ];
-    
-    // Map users with plain text default passwords where applicable
-    const usersWithPasswords = users.map(user => {
-      const defaultUser = defaultUsers.find(d => d.username === user.username);
-      return {
-        id: user._id,
-        username: user.username,
-        password: defaultUser ? defaultUser.password : '(Custom - see admin for reset)',
-        role: user.role,
-        createdAt: user.createdAt
-      };
-    });
-    
-    res.json({ 
-      success: true, 
-      users: usersWithPasswords,
-      note: 'Default passwords shown above. Custom password users should reset via /api/change-password endpoint'
-    });
-  } catch (err) { 
-    res.status(500).json({ error: err.message }); 
-  }
-});
-
-// NEW: Admin reset user password endpoint
-app.post('/api/admin/reset-password/:userId', auth, adminOnly, async (req, res) => {
-  try {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
-    }
-    
-    const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    
-    user.password = await bcrypt.hash(newPassword, 10);
-    await user.save();
-    
-    res.json({ 
-      success: true,
-      message: `Password reset for ${user.username}. New password is: ${newPassword}`,
-      username: user.username,
-      newPassword: newPassword
-    });
-  } catch (err) { 
-    res.status(500).json({ error: err.message }); 
-  }
-});
-
 // ─── Routes ───────────────────────────────────────────────────
 
 // Dashboard stats
@@ -551,38 +475,23 @@ app.delete('/api/pod/:podId', auth, async (req, res) => {
 });
 
 // Create collection note from selected PODs
-app.post('/api/collection-note', auth, upload.single('wasteManifestPhoto'), async (req, res) => {
+app.post('/api/collection-note', auth, upload.single('manifestPhoto'), async (req, res) => {
   try {
     const podIds = JSON.parse(req.body.podIds || '[]');
     const { driverName, vehicleInfo, farmDestination, accountantEmail,
-            driverSignature, periodStart, periodEnd, manifestNumber, collectionNoteNo, farmName } = req.body;
+            driverSignature, periodStart, periodEnd, manifestNumber, collectionNoteNo } = req.body;
     const selectedPods = await Pod.find({ podId: { $in: podIds } }).lean();
     if (selectedPods.length === 0) return res.status(400).json({ error: 'No PODs selected' });
 
-    // NEW: Get next delivery note number
-    const deliveryNoteNumber = await getNextDeliveryNoteNumber();
-
     const note = await Note.create({
-      deliveryNoteNumber, // NEW: Add sequential number starting at 65
-      pods: selectedPods, 
-      driverName, 
-      vehicleInfo, 
-      farmDestination,
-      accountantEmail, 
-      manifestNumber, 
-      driverSignature, 
-      periodStart, 
-      periodEnd, 
-      collectionNoteNo, 
-      farmName,
-      wasteManifestPhoto: req.file ? `uploads/${req.file.filename}` : null, // NEW: Waste manifest photo
-      sendStatus: 'pending', // NEW: Track send status
-      sendAttempts: 0 // NEW: Initialize send attempts
+      pods: selectedPods, driverName, vehicleInfo, farmDestination,
+      accountantEmail, farmEmail, myEmail, manifestNumber, driverSignature, periodStart, periodEnd, collectionNoteNo, farmName,
+      manifestPhoto: req.file ? `uploads/${req.file.filename}` : null
     });
 
     await Pod.updateMany({ podId: { $in: podIds } }, { archived: true, collectionNoteId: note.noteId });
 
-    res.json({ success: true, noteId: note.noteId, deliveryNoteNumber }); // NEW: Return delivery note number
+    res.json({ success: true, noteId: note.noteId });
 
     setTimeout(async () => {
       try {
@@ -617,87 +526,8 @@ app.post('/api/collection-note/:noteId/resend', auth, async (req, res) => {
     if (req.body.accountantEmail) note.accountantEmail = req.body.accountantEmail;
     const photoFiles = note.pods.map(p => p.photo).filter(Boolean);
     const results = await sendCollectionEmail(note, photoFiles);
-    
-    // NEW: Update send status tracking
-    note.sendAttempts = (note.sendAttempts || 0) + 1;
-    if (Array.isArray(results) && results.some(r => r.sent)) {
-      note.sendStatus = 'sent';
-      note.lastSendError = null;
-    } else {
-      note.sendStatus = 'failed';
-      note.lastSendError = 'Email send failed or returned errors';
-    }
-    
-    await Note.updateOne({ noteId: req.params.noteId }, {
-      sendAttempts: note.sendAttempts,
-      sendStatus: note.sendStatus,
-      lastSendError: note.lastSendError
-    });
-    
-    res.json({ success: note.sendStatus === 'sent', results, attempts: note.sendAttempts });
-  } catch (err) {
-    // NEW: Error handling with status update
-    const noteId = req.params.noteId;
-    const note = await Note.findOne({ noteId }).lean();
-    const attempts = (note?.sendAttempts || 0) + 1;
-    
-    await Note.updateOne({ noteId }, {
-      sendAttempts: attempts,
-      sendStatus: 'failed',
-      lastSendError: err.message
-    });
-    
-    res.status(500).json({ 
-      error: 'Failed to send collection note',
-      details: err.message,
-      attempts,
-      canRetry: true
-    });
-  }
-});
-
-// NEW: Dedicated retry endpoint with better error handling
-app.post('/api/collection-note/:noteId/retry-send', auth, async (req, res) => {
-  try {
-    const note = await Note.findOne({ noteId: req.params.noteId });
-    if (!note) return res.status(404).json({ error: 'Collection note not found' });
-    
-    const photoFiles = note.pods.map(p => p.photo).filter(Boolean);
-    const results = await sendCollectionEmail(note.toObject(), photoFiles);
-    
-    // Update tracking
-    const sendSuccess = Array.isArray(results) && results.some(r => r.sent);
-    note.sendAttempts = (note.sendAttempts || 0) + 1;
-    note.sendStatus = sendSuccess ? 'sent' : 'failed';
-    note.lastSendError = sendSuccess ? null : 'Send failed - check logs';
-    
-    if (sendSuccess) {
-      note.emailStatus = results.map(r => ({ 
-        to: r.to, 
-        sent: r.sent, 
-        error: r.error || '', 
-        sentAt: new Date() 
-      }));
-    }
-    
-    await note.save();
-    
-    res.json({
-      success: sendSuccess,
-      message: sendSuccess ? `Delivery note #${note.deliveryNoteNumber} sent successfully` : 'Send failed',
-      deliveryNoteNumber: note.deliveryNoteNumber,
-      attempts: note.sendAttempts,
-      status: note.sendStatus,
-      error: note.lastSendError
-    });
-  } catch (err) {
-    console.error('Retry send error:', err);
-    res.status(500).json({
-      error: 'Retry send failed',
-      details: err.message,
-      canRetry: true
-    });
-  }
+    res.json({ success: true, results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/email/status', (req, res) => {

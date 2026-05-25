@@ -1,0 +1,785 @@
+
+const { useState, useEffect, useRef } = React;
+
+function api(path, opts = {}) {
+  const token = localStorage.getItem('pod_token');
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  if (!(opts.body instanceof FormData) && !headers['Content-Type'] && opts.method && opts.method !== 'GET')
+    headers['Content-Type'] = 'application/json';
+  return fetch(path, { ...opts, headers }).then(r => {
+    if (r.status === 401) { localStorage.removeItem('pod_token'); localStorage.removeItem('pod_user'); window.location.reload(); }
+    return r;
+  });
+}
+
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+  const submit = async () => {
+    setLoading(true); setErr('');
+    try {
+      const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      localStorage.setItem('pod_token', data.token);
+      localStorage.setItem('pod_user', JSON.stringify(data.user));
+      onLogin(data.user);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  };
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa' }}>
+      <div style={S.card}>
+        <h1 style={{ ...S.title, textAlign: 'center', marginBottom: 8 }}>Beverage POD Tracker</h1>
+        <p style={{ ...S.muted, textAlign: 'center', marginBottom: 24 }}>Sign in to continue</p>
+        {err && <div style={S.errorBanner}>{err}</div>}
+        <div style={S.field}><label style={S.label}>Username</label><input style={S.input} value={username} onChange={e => setUsername(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
+        <div style={S.field}><label style={S.label}>Password</label><input style={S.input} type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
+        <button style={{ ...S.btnPrimary, width: '100%', marginTop: 16, opacity: loading ? 0.6 : 1 }} onClick={submit} disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
+      </div>
+    </div>
+  );
+}
+
+function PODTracker() {
+  const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('pod_user')); } catch { return null; } });
+  if (!user) return <LoginPage onLogin={setUser} />;
+
+  return <MainApp user={user} onLogout={() => { localStorage.removeItem('pod_token'); localStorage.removeItem('pod_user'); setUser(null); }} />;
+}
+
+function MainApp({ user, onLogout }) {
+  const [view, setView] = useState('dashboard');
+  const [pods, setPods] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [certs, setCerts] = useState([]);
+  const [stats, setStats] = useState({});
+  
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [podForm, setPodForm] = useState({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
+  const [editingPod, setEditingPod] = useState(null);
+  const [podPhoto, setPodPhoto] = useState(null);
+  const fileRef = useRef(null);
+  const [selectedPodIds, setSelectedPodIds] = useState([]);
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', farmEmail: '', myEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+  const manifestPhotoRef = useRef(null);
+  const [signature, setSignature] = useState(null);
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFrom, setSearchFrom] = useState('');
+  const [searchTo, setSearchTo] = useState('');
+  const [photoModal, setPhotoModal] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'crew' });
+  const [resendModal, setResendModal] = useState(null);
+  const [resendEmail, setResendEmail] = useState('');
+  const [pwModal, setPwModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [nextNoteSeq, setNextNoteSeq] = useState(() => parseInt(localStorage.getItem('nextNoteSeq') || '64'));
+  const [nextCertSeq, setNextCertSeq] = useState(() => parseInt(localStorage.getItem('nextCertSeq') || '1'));
+  const [certForm, setCertForm] = useState({ collectionNoteNo: '', tankerCount: '', itemsReceived: '', destructionDate: new Date().toISOString().split('T')[0], weighbridgeNo: '', weightDestroyed: '', signerName: 'J.C.F. Beukes' });
+  const certCanvasRef = useRef(null);
+  const [certDrawing, setCertDrawing] = useState(false);
+  const [certSignature, setCertSignature] = useState(null);
+  const [dupWarning, setDupWarning] = useState(null);
+  const [offlineQueue, setOfflineQueue] = useState(() => { try { return JSON.parse(localStorage.getItem('pod_offline_queue') || '[]'); } catch { return []; } });
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const on = () => { setIsOnline(true); syncOfflineQueue(); };
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
+
+  useEffect(() => { loadPods(); loadNotes(); loadCerts(); loadStats(); if (isOnline && offlineQueue.length > 0) syncOfflineQueue(); }, []);
+
+  const loadPods = () => api('/api/pods').then(r => r.json()).then(setPods).catch(() => {});
+  const loadArchivedPods = () => api('/api/pods?archived=true').then(r => r.json()).then(setPods).catch(() => {});
+  const loadNotes = () => api('/api/collection-notes').then(r => r.json()).then(setNotes).catch(() => {});
+  const loadCerts = () => api('/api/destruction-certs').then(r => r.json()).then(setCerts).catch(() => {});
+  const loadStats = () => api('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
+  const loadUsers = () => api('/api/users').then(r => r.json()).then(setUsers).catch(() => {});
+  const flash = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); };
+
+  const syncOfflineQueue = async () => {
+    const queue = JSON.parse(localStorage.getItem('pod_offline_queue') || '[]');
+    if (queue.length === 0) return;
+    let synced = 0;
+    for (const pod of queue) {
+      try {
+        const fd = new FormData();
+        Object.keys(pod).forEach(k => fd.append(k, pod[k]));
+        const res = await api('/api/pod', { method: 'POST', body: fd });
+        if (res.ok) synced++;
+      } catch {}
+    }
+    localStorage.setItem('pod_offline_queue', '[]');
+    setOfflineQueue([]);
+    if (synced > 0) { loadPods(); loadStats(); flash(synced + ' offline POD(s) synced'); }
+  };
+
+  const checkDuplicate = async (gtr, sct) => {
+    if (!gtr && !sct) { setDupWarning(null); return; }
+    try {
+      const params = new URLSearchParams();
+      if (gtr) params.set('gtr', gtr);
+      if (sct) params.set('sct', sct);
+      const res = await api('/api/pods/check-duplicate?' + params.toString());
+      const data = await res.json();
+      if (data.duplicate) setDupWarning('Duplicate found: GTR ' + (data.existing.gtr || '') + ' / SCT ' + (data.existing.sct || '') + ' (received ' + (data.existing.receivedDate || '') + ')');
+      else setDupWarning(null);
+    } catch { setDupWarning(null); }
+  };
+
+  const changePassword = async () => {
+    if (pwForm.newPassword !== pwForm.confirm) { alert('Passwords do not match'); return; }
+    if (!pwForm.currentPassword || !pwForm.newPassword) { alert('Fill in all fields'); return; }
+    try {
+      const res = await api('/api/change-password', { method: 'PUT', body: JSON.stringify({ currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      flash('Password changed');
+      setPwModal(false);
+      setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+    } catch (e) { alert(e.message); }
+  };
+
+  const searchPods = async () => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set('q', searchQuery);
+    if (searchFrom) params.set('from', searchFrom);
+    if (searchTo) params.set('to', searchTo);
+    const res = await api('/api/pods/search?' + params.toString());
+    setPods(await res.json());
+  };
+
+  const clearSearch = () => { setSearchQuery(''); setSearchFrom(''); setSearchTo(''); showArchived ? loadArchivedPods() : loadPods(); };
+
+  const startEdit = (pod) => {
+    setEditingPod(pod.podId);
+    setPodForm({ gtr: pod.gtr, sct: pod.sct, dateShipped: pod.dateShipped, receivedDate: pod.receivedDate, receivedBy: pod.receivedBy, pallets: pod.pallets || '', totalUnits: pod.totalUnits || '' });
+    setPodPhoto(null);
+    setView('logpod');
+  };
+
+  const submitPod = async () => {
+    if (!podForm.gtr || !podForm.sct) { alert('GTR and SCT are required'); return; }
+    if (dupWarning && !editingPod && !confirm('Duplicate detected. Save anyway?')) return;
+    setLoading(true);
+    try {
+      if (!isOnline && !editingPod) {
+        const q = [...offlineQueue, { ...podForm }];
+        localStorage.setItem('pod_offline_queue', JSON.stringify(q));
+        setOfflineQueue(q);
+        setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
+        setDupWarning(null);
+        flash('POD saved offline. Will sync when back online.');
+        setView('dashboard');
+        setLoading(false);
+        return;
+      }
+      const fd = new FormData();
+      Object.keys(podForm).forEach(k => fd.append(k, podForm[k]));
+      if (podPhoto) fd.append('photo', podPhoto);
+      const url = editingPod ? '/api/pod/' + editingPod : '/api/pod';
+      const method = editingPod ? 'PUT' : 'POST';
+      const res = await api(url, { method, body: fd });
+      if (!res.ok) throw new Error('Failed');
+      setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' });
+      setPodPhoto(null);
+      setEditingPod(null);
+      setDupWarning(null);
+      if (fileRef.current) fileRef.current.value = '';
+      await loadPods(); loadStats();
+      flash(editingPod ? 'POD updated' : 'POD logged successfully');
+      setView('dashboard');
+    } catch (e) {
+      if (!navigator.onLine && !editingPod) {
+        const q = [...offlineQueue, { ...podForm }];
+        localStorage.setItem('pod_offline_queue', JSON.stringify(q));
+        setOfflineQueue(q);
+        flash('Network error. POD saved offline.');
+        setView('dashboard');
+      } else { setError(e.message); }
+    }
+    finally { setLoading(false); }
+  };
+
+  const deletePod = async (podId) => {
+    if (!confirm('Delete this POD?')) return;
+    await api('/api/pod/' + podId, { method: 'DELETE' });
+    loadPods(); loadStats();
+  };
+
+  const resendEmail_ = async (noteId) => {
+    setLoading(true);
+    try {
+      const res = await api('/api/collection-note/' + noteId + '/resend', {
+        method: 'POST', body: JSON.stringify({ accountantEmail: resendEmail })
+      });
+      if (!res.ok) throw new Error('Failed');
+      flash('Email resent successfully');
+      setResendModal(null);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const addUser = async () => {
+    if (!newUser.username || !newUser.password) { alert('Username and password required'); return; }
+    const res = await api('/api/users', { method: 'POST', body: JSON.stringify(newUser) });
+    if (!res.ok) { const d = await res.json(); alert(d.error); return; }
+    setNewUser({ username: '', password: '', role: 'crew' });
+    loadUsers();
+    flash('User created');
+  };
+
+  const deleteUser = async (id) => {
+    if (!confirm('Delete this user?')) return;
+    await api('/api/users/' + id, { method: 'DELETE' });
+    loadUsers();
+  };
+
+  const initCanvas = () => {
+    setTimeout(() => {
+      const c = canvasRef.current;
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const rect = c.parentElement.getBoundingClientRect();
+      c.width = Math.min(rect.width - 4, 500);
+      c.height = 180;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+    }, 50);
+  };
+
+  const getPos = (e) => {
+    const c = canvasRef.current;
+    const rect = c.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  };
+  const startDraw = (e) => { e.preventDefault(); setDrawing(true); const ctx = canvasRef.current.getContext('2d'); const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const draw = (e) => { if (!drawing) return; e.preventDefault(); const ctx = canvasRef.current.getContext('2d'); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const stopDraw = () => { if (!drawing) return; setDrawing(false); setSignature(canvasRef.current.toDataURL('image/png')); };
+  const clearSig = () => { const c = canvasRef.current; const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); setSignature(null); };
+
+  const initCertCanvas = () => {
+    setTimeout(() => {
+      const c = certCanvasRef.current;
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const rect = c.parentElement.getBoundingClientRect();
+      c.width = Math.min(rect.width - 4, 500);
+      c.height = 150;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+    }, 50);
+  };
+  const getCertPos = (e) => { const c = certCanvasRef.current; const rect = c.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: t.clientX - rect.left, y: t.clientY - rect.top }; };
+  const startCertDraw = (e) => { e.preventDefault(); setCertDrawing(true); const ctx = certCanvasRef.current.getContext('2d'); const p = getCertPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const doCertDraw = (e) => { if (!certDrawing) return; e.preventDefault(); const ctx = certCanvasRef.current.getContext('2d'); const p = getCertPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const stopCertDraw = () => { if (!certDrawing) return; setCertDrawing(false); setCertSignature(certCanvasRef.current.toDataURL('image/png')); };
+  const clearCertSig = () => { const c = certCanvasRef.current; const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); setCertSignature(null); };
+
+  const submitCert = async () => {
+    if (!certForm.collectionNoteNo) { alert('Collection Note Number is required'); return; }
+    if (!certForm.tankerCount) { alert('Number of tanker trucks is required'); return; }
+    if (!certForm.itemsReceived) { alert('Items received description is required'); return; }
+    if (!certForm.destructionDate) { alert('Destruction date is required'); return; }
+    if (!certForm.weighbridgeNo) { alert('Weighbridge number is required'); return; }
+    if (!certForm.weightDestroyed) { alert('Weight destroyed is required'); return; }
+    if (!certSignature) { alert('Signature is required'); return; }
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      Object.keys(certForm).forEach(k => fd.append(k, certForm[k]));
+      fd.append('certSignature', certSignature);
+      const res = await api('/api/destruction-cert', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('Failed to save certificate');
+      const newCertSeq = nextCertSeq + 1;
+      setNextCertSeq(newCertSeq);
+      localStorage.setItem('nextCertSeq', newCertSeq.toString());
+      setCertForm({ collectionNoteNo: '', tankerCount: '', itemsReceived: '', destructionDate: new Date().toISOString().split('T')[0], weighbridgeNo: '', weightDestroyed: '', signerName: 'J.C.F. Beukes' });
+      setCertSignature(null);
+      flash('Destruction Certificate saved!');
+      setView('history');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const downloadCertPdf = (certId) => {
+    const token = localStorage.getItem('pod_token');
+    window.open('/api/destruction-cert/' + certId + '/pdf?token=' + token, '_blank');
+  };
+
+  const togglePod = (podId) => { setSelectedPodIds(prev => prev.includes(podId) ? prev.filter(id => id !== podId) : [...prev, podId]); };
+  const selectAll = () => { if (selectedPodIds.length === pods.length) setSelectedPodIds([]); else setSelectedPodIds(pods.map(p => p.podId)); };
+
+  const submitNote = async () => {
+    if (selectedPodIds.length === 0) { alert('Select at least one POD'); return; }
+    if (!signature) { alert('Driver signature is required'); return; }
+    if (!noteForm.driverName) { alert('Driver name is required'); return; }
+    if (!noteForm.manifestNumber) { alert('Manifest number is required'); return; }
+    if (!noteForm.manifestPhoto) { alert('Manifest photo is required'); return; }
+    setLoading(true);
+    try {
+      const collectionNoteNo = nextNoteSeq.toString();
+      const fd = new FormData();
+      fd.append('driverName', noteForm.driverName);
+      fd.append('vehicleInfo', noteForm.vehicleInfo);
+      fd.append('farmDestination', noteForm.farmDestination);
+      fd.append('accountantEmail', noteForm.accountantEmail);
+      fd.append('periodStart', noteForm.periodStart);
+      fd.append('periodEnd', noteForm.periodEnd);
+      fd.append('manifestNumber', noteForm.manifestNumber);
+      fd.append('manifestPhoto', noteForm.manifestPhoto);
+      fd.append('driverSignature', signature);
+      fd.append('podIds', JSON.stringify(selectedPodIds));
+      fd.append('collectionNoteNo', collectionNoteNo);
+      const res = await api('/api/collection-note', {
+        method: 'POST',
+        body: fd
+      });
+      if (!res.ok) throw new Error('Failed');
+      setSelectedPodIds([]);
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: 'ch1wasteservice@gmail.com', farmEmail: '', myEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', manifestPhoto: null });
+      setSignature(null);
+      if (manifestPhotoRef.current) manifestPhotoRef.current.value = '';
+      await loadPods(); await loadNotes(); loadStats();
+      const newSeq = nextNoteSeq + 1;
+      setNextNoteSeq(newSeq);
+      localStorage.setItem('nextNoteSeq', newSeq.toString());
+      flash('Collection Note created and emailed! PODs have been archived.');
+      setView('dashboard');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const downloadCertPdf = (certId) => { const token = localStorage.getItem('pod_token'); window.open('/api/destruction-cert/' + certId + '/pdf?token=' + token, '_blank'); };
+
+  const downloadPdf = (noteId) => {
+    const token = localStorage.getItem('pod_token');
+    window.open('/api/collection-note/' + noteId + '/pdf?token=' + token, '_blank');
+  };
+
+  return (
+    <div style={S.container}>
+      <header style={S.header}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={S.title}>Beverage POD Tracker</h1>
+            <p style={S.subtitle}>Collection note management</p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 12, color: '#666', margin: '0 0 4px' }}>{user.username} ({user.role})</p>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={S.btnSm} onClick={() => setPwModal(true)}>Password</button>
+              <button style={S.btnSm} onClick={onLogout}>Logout</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {!isOnline && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600 }}>Offline mode — PODs will be saved locally and synced when back online</div>}
+      {offlineQueue.length > 0 && <div style={{ backgroundColor: '#e0e7ff', color: '#3730a3', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{offlineQueue.length} POD(s) queued offline {isOnline && <button style={S.btnSm} onClick={syncOfflineQueue}>Sync Now</button>}</div>}
+      {error && <div style={S.errorBanner}>{error}<button style={S.closeBtn} onClick={() => setError(null)}>x</button></div>}
+      {success && <div style={S.successBanner}>{success}</div>}
+
+      <div style={S.nav}>
+        <button style={view === 'dashboard' ? S.navActive : S.navBtn} onClick={() => { setView('dashboard'); setShowArchived(false); loadPods(); loadStats(); }}>Dashboard</button>
+        <button style={view === 'logpod' ? S.navActive : S.navBtn} onClick={() => { setView('logpod'); setEditingPod(null); setPodForm({ gtr: '', sct: '', dateShipped: '', receivedDate: new Date().toISOString().split('T')[0], receivedBy: '', pallets: '', totalUnits: '' }); }}>Log POD</button>
+        <button style={view === 'create' ? S.navActive : S.navBtn} onClick={() => { setView('create'); initCanvas(); }}>Create Note</button>
+        <button style={view === 'history' ? S.navActive : S.navBtn} onClick={() => setView('history')}>History</button>
+        <button style={view === 'cert' ? S.navActive : S.navBtn} onClick={() => { setView('cert'); initCertCanvas(); }}>Destroy Cert</button>
+        {user.role === 'admin' && <button style={view === 'admin' ? S.navActive : S.navBtn} onClick={() => { setView('admin'); loadUsers(); }}>Users</button>}
+      </div>
+
+      {/* ─── DASHBOARD ─── */}
+      {view === 'dashboard' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
+            <div style={S.statCard}><div style={S.statNum}>{stats.activePods || 0}</div><div style={S.statLabel}>Active PODs</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{stats.activePallets || 0}</div><div style={S.statLabel}>Pallets (Active)</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{(stats.activeUnits || 0).toFixed(0)}</div><div style={S.statLabel}>Units (Active)</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{stats.totalNotes || 0}</div><div style={S.statLabel}>Collection Notes</div></div>
+          </div>
+
+          <div style={S.card}>
+            <div style={S.row}>
+              <h2 style={S.heading}>{showArchived ? 'Archived' : 'Active'} PODs ({pods.length})</h2>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button style={S.btnSm} onClick={() => { const next = !showArchived; setShowArchived(next); next ? loadArchivedPods() : loadPods(); }}>{showArchived ? 'Show Active' : 'Show Archived'}</button>
+                <button style={S.btnSm} onClick={() => { const t = localStorage.getItem('pod_token'); window.open('/api/pods/export?token=' + t + (showArchived ? '&archived=true' : ''), '_blank'); }}>Export CSV</button>
+                <button style={S.btnSm} onClick={showArchived ? loadArchivedPods : loadPods}>Refresh</button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+              <div style={{ flex: 1, minWidth: 150 }}><label style={S.label}>Search GTR / SCT / Name</label><input style={S.input} placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></div>
+              <div style={{ minWidth: 130 }}><label style={S.label}>From</label><input style={S.input} type="date" value={searchFrom} onChange={e => setSearchFrom(e.target.value)} /></div>
+              <div style={{ minWidth: 130 }}><label style={S.label}>To</label><input style={S.input} type="date" value={searchTo} onChange={e => setSearchTo(e.target.value)} /></div>
+              <button style={S.btnPrimary} onClick={searchPods}>Search</button>
+              <button style={S.btnSm} onClick={clearSearch}>Clear</button>
+            </div>
+
+            {pods.length === 0 ? <p style={S.muted}>{showArchived ? 'No archived PODs.' : 'No PODs logged yet.'}</p> : (
+              <div style={S.tableWrap}><table style={S.table}>
+                <thead><tr style={S.thead}>
+                  <th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>By</th><th style={S.th}>Pallets</th><th style={S.th}>Units</th><th style={S.th}>Photo</th><th style={S.th}></th>
+                </tr></thead>
+                <tbody>{pods.map(p => (
+                  <tr key={p.podId} style={S.tr}>
+                    <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td><td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
+                    <td style={S.td}>{p.receivedBy}</td><td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalUnits}</td>
+                    <td style={S.td}>{p.photo ? <button style={S.btnLink} onClick={() => setPhotoModal('/' + p.photo)}>View</button> : '-'}</td>
+                    <td style={S.td}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {!p.archived && <button style={S.btnEdit} onClick={() => startEdit(p)}>Edit</button>}
+                        <button style={S.btnDel} onClick={() => deletePod(p.podId)}>X</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ─── LOG / EDIT POD ─── */}
+      {view === 'logpod' && (
+        <div style={S.card}>
+          <h2 style={S.heading}>{editingPod ? 'Edit POD' : 'Log Received POD'}</h2>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>GTR Reference *</label><input style={S.input} placeholder="e.g. DM0101423" value={podForm.gtr} onChange={e => setPodForm({...podForm, gtr: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
+            <div style={S.field}><label style={S.label}>SCT Number *</label><input style={S.input} placeholder="e.g. 521406" value={podForm.sct} onChange={e => setPodForm({...podForm, sct: e.target.value})} onBlur={() => !editingPod && checkDuplicate(podForm.gtr, podForm.sct)} /></div>
+            <div style={S.field}><label style={S.label}>Date Shipped</label><input style={S.input} type="date" value={podForm.dateShipped} onChange={e => setPodForm({...podForm, dateShipped: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Date Received</label><input style={S.input} type="date" value={podForm.receivedDate} onChange={e => setPodForm({...podForm, receivedDate: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Received By</label><input style={S.input} placeholder="Person who received" value={podForm.receivedBy} onChange={e => setPodForm({...podForm, receivedBy: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Pallets</label><input style={S.input} type="number" min="0" value={podForm.pallets} onChange={e => setPodForm({...podForm, pallets: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Total Units</label><input style={S.input} type="number" step="0.01" min="0" value={podForm.totalUnits} onChange={e => setPodForm({...podForm, totalUnits: e.target.value})} /></div>
+          </div>
+          {dupWarning && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginTop: 12, fontSize: 13, fontWeight: 500 }}>{dupWarning}</div>}
+          <div style={{...S.field, marginTop: 16}}>
+            <label style={S.label}>Photo of POD Document</label>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setPodPhoto(e.target.files[0] || null)} />
+            {podPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {podPhoto.name}</p>}
+          </div>
+          <div style={S.btnRow}>
+            <button style={{...S.btnPrimary, opacity: loading ? 0.6 : 1}} onClick={submitPod} disabled={loading}>{loading ? 'Saving...' : editingPod ? 'Update POD' : 'Save POD'}</button>
+            <button style={S.btnSec} onClick={() => { setEditingPod(null); setView('dashboard'); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── CREATE COLLECTION NOTE ─── */}
+      {view === 'create' && (
+        <div style={S.card}>
+          <h2 style={S.heading}>Create Collection Note</h2>
+          <h3 style={S.sub}>1. Select PODs to include</h3>
+          {pods.length === 0 ? <p style={S.muted}>No PODs logged. Log some PODs first.</p> : (
+            <div>
+              <button style={S.btnSm} onClick={selectAll}>{selectedPodIds.length === pods.length ? 'Deselect All' : 'Select All'}</button>
+              <div style={{...S.tableWrap, marginTop: 8}}><table style={S.table}>
+                <thead><tr style={S.thead}>
+                  <th style={S.th}>Sel</th><th style={S.th}>GTR</th><th style={S.th}>SCT</th><th style={S.th}>Shipped</th><th style={S.th}>Received</th><th style={S.th}>Pallets</th><th style={S.th}>Units</th>
+                </tr></thead>
+                <tbody>{pods.map(p => (
+                  <tr key={p.podId} style={{...S.tr, backgroundColor: selectedPodIds.includes(p.podId) ? '#dbeafe' : '#fff', cursor: 'pointer'}} onClick={() => togglePod(p.podId)}>
+                    <td style={S.td}><input type="checkbox" checked={selectedPodIds.includes(p.podId)} readOnly /></td>
+                    <td style={S.td}>{p.gtr}</td><td style={S.td}>{p.sct}</td><td style={S.td}>{p.dateShipped}</td><td style={S.td}>{p.receivedDate}</td>
+                    <td style={S.td}>{p.pallets}</td><td style={S.td}>{p.totalUnits}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+              {selectedPodIds.length > 0 && (
+                <div style={S.totalsBox}>
+                  <strong>Selected: </strong>{selectedPodIds.length} PODs | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.pallets||0), 0)} pallets | {pods.filter(p => selectedPodIds.includes(p.podId)).reduce((s,p) => s + (p.totalUnits||0), 0).toFixed(2)} units
+                </div>
+              )}
+            </div>
+          )}
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>2. Collection Details</h3>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Period Start</label><input style={S.input} type="date" value={noteForm.periodStart} onChange={e => setNoteForm({...noteForm, periodStart: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Period End</label><input style={S.input} type="date" value={noteForm.periodEnd} onChange={e => setNoteForm({...noteForm, periodEnd: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Driver Name *</label><input style={S.input} placeholder="Driver name" value={noteForm.driverName} onChange={e => setNoteForm({...noteForm, driverName: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Vehicle Info</label><input style={S.input} placeholder="License plate" value={noteForm.vehicleInfo} onChange={e => setNoteForm({...noteForm, vehicleInfo: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Farm / Destination</label><input style={S.input} placeholder="Farm name" value={noteForm.farmDestination} onChange={e => setNoteForm({...noteForm, farmDestination: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Accountant Email</label><input style={S.input} type="email" placeholder="accountant@email.com" value={noteForm.accountantEmail} onChange={e => setNoteForm({...noteForm, accountantEmail: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Farm Email</label><input style={S.input} type="email" placeholder="farm@email.com" value={noteForm.farmEmail} onChange={e => setNoteForm({...noteForm, farmEmail: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>My Email</label><input style={S.input} type="email" placeholder="my@email.com" value={noteForm.myEmail} onChange={e => setNoteForm({...noteForm, myEmail: e.target.value})} /></div>
+          </div>
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>3. Waste Collection Manifest</h3>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Manifest Number *</label><input style={S.input} placeholder="e.g. WCM-2026-001" value={noteForm.manifestNumber} onChange={e => setNoteForm({...noteForm, manifestNumber: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Manifest Photo *</label><input ref={manifestPhotoRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setNoteForm({...noteForm, manifestPhoto: e.target.files[0] || null})} />{noteForm.manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {noteForm.manifestPhoto.name}</p>}</div>
+          </div>
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>4. Driver Signature</h3>
+          <p style={S.muted}>Sign below with your finger or mouse</p>
+          <div style={{border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none'}}>
+            <canvas ref={canvasRef} style={{display: 'block', borderRadius: 6}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
+          </div>
+          <div style={{marginTop: 8}}><button style={S.btnSm} onClick={clearSig}>Clear Signature</button></div>
+          <div style={S.btnRow}>
+            <button style={{...S.btnPrimary, opacity: loading ? 0.6 : 1}} onClick={submitNote} disabled={loading}>{loading ? 'Creating...' : 'Create Collection Note and Email'}</button>
+            <button style={S.btnSec} onClick={() => setView('dashboard')}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DESTRUCTION CERTIFICATE ─── */}
+      {view === 'cert' && (
+        <div style={S.card}>
+          <div style={{ textAlign: 'center', borderBottom: '2px solid #e5e7eb', paddingBottom: 20, marginBottom: 20 }}>
+            <div style={{ fontSize: 48, marginBottom: 4 }}>🌿</div>
+            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 2, color: '#1a1a1a' }}>OSDAM ECO FACILITY</div>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Patrysfontein, Durbanville</div>
+            <div style={{ fontSize: 12, color: '#666' }}>Registration Number: 2014/166690/07</div>
+            <div style={{ fontSize: 12, color: '#666' }}>VAT Number: 4070166139</div>
+          </div>
+
+          <h2 style={{ ...S.heading, textDecoration: 'underline', textAlign: 'center', fontSize: 18 }}>GOOD DESTRUCTION CERTIFICATE</h2>
+          <p style={{ ...S.muted, marginBottom: 20, textAlign: 'center' }}>To Whom It May Concern</p>
+
+          <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
+            <p style={{ fontSize: 13, color: '#0369a1', fontWeight: 600, margin: 0 }}>Collection Note # shown at top of certificate is auto-generated when a POD is logged. Enter it below to link this certificate to a collection note.</p>
+          </div>
+
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.label}>Collection Note Number *</label><input style={S.input} placeholder="e.g. 64" value={certForm.collectionNoteNo} onChange={e => setCertForm({...certForm, collectionNoteNo: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Date of Destruction *</label><input style={S.input} type="date" value={certForm.destructionDate} onChange={e => setCertForm({...certForm, destructionDate: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Number of Tanker Trucks Received *</label><input style={S.input} type="number" min="1" placeholder="e.g. 1" value={certForm.tankerCount} onChange={e => setCertForm({...certForm, tankerCount: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Items / Product Received *</label><input style={S.input} placeholder="e.g. Cooldrink from Chill Beverages (PTY) LTD" value={certForm.itemsReceived} onChange={e => setCertForm({...certForm, itemsReceived: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Weighbridge Number *</label><input style={S.input} placeholder="e.g. 41867" value={certForm.weighbridgeNo} onChange={e => setCertForm({...certForm, weighbridgeNo: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Weight Destroyed (kg) *</label><input style={S.input} type="number" min="0" placeholder="e.g. 25040" value={certForm.weightDestroyed} onChange={e => setCertForm({...certForm, weightDestroyed: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Signed By</label><input style={S.input} placeholder="Full name" value={certForm.signerName} onChange={e => setCertForm({...certForm, signerName: e.target.value})} /></div>
+          </div>
+
+          {certForm.tankerCount && certForm.itemsReceived && certForm.destructionDate && (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 20, margin: '20px 0', backgroundColor: '#fafafa' }}>
+              <p style={{ fontSize: 14, lineHeight: 1.8, color: '#333', margin: 0 }}>
+                I confirm Osdam Boerdery, Patrysfontein division, received <strong>{certForm.tankerCount}x Tank{certForm.tankerCount > 1 ? 's' : ''}</strong> of <strong>{certForm.itemsReceived}</strong> on <strong>{certForm.destructionDate}</strong>. It has been destroyed.
+              </p>
+              {certForm.collectionNoteNo && <p style={{ fontSize: 14, lineHeight: 1.8, color: '#333', margin: '8px 0 0' }}>Order No: <strong>{certForm.collectionNoteNo}</strong> Chill Coll Note</p>}
+              {certForm.weighbridgeNo && <p style={{ fontSize: 14, lineHeight: 1.8, color: '#333', margin: '4px 0 0' }}>Patrysfontein: (Weighbridge NO: <strong>{certForm.weighbridgeNo}</strong>)</p>}
+              {certForm.weightDestroyed && <p style={{ fontSize: 14, lineHeight: 1.8, color: '#333', margin: '4px 0 0' }}>Weight Destroyed: <strong>{certForm.weightDestroyed} kg</strong></p>}
+            </div>
+          )}
+
+          <div style={S.divider}></div>
+          <h3 style={S.sub}>Signature</h3>
+          <p style={{ ...S.muted, marginBottom: 8 }}>Manager of Osdam Boerdery, Patrysfontein — sign below</p>
+          <div style={{ border: '2px solid #d1d5db', borderRadius: 8, display: 'inline-block', touchAction: 'none' }}>
+            <canvas ref={certCanvasRef} style={{ display: 'block', borderRadius: 6 }}
+              onMouseDown={startCertDraw} onMouseMove={doCertDraw} onMouseUp={stopCertDraw} onMouseLeave={stopCertDraw}
+              onTouchStart={startCertDraw} onTouchMove={doCertDraw} onTouchEnd={stopCertDraw} />
+          </div>
+          <div style={{ marginTop: 8 }}><button style={S.btnSm} onClick={clearCertSig}>Clear Signature</button></div>
+
+          <div style={S.btnRow}>
+            <button style={{ ...S.btnPrimary, opacity: loading ? 0.6 : 1 }} onClick={submitCert} disabled={loading}>{loading ? 'Saving...' : 'Save Destruction Certificate'}</button>
+            <button style={S.btnSec} onClick={() => setView('dashboard')}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── HISTORY ─── */}
+      {view === 'history' && (
+        <div style={S.card}>
+          <div style={S.row}>
+            <h2 style={S.heading}>Collection Note History</h2>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button style={S.btnSm} onClick={() => { const t = localStorage.getItem('pod_token'); window.open('/api/collection-notes/export?token=' + t, '_blank'); }}>Export CSV</button>
+              <button style={S.btnSm} onClick={loadNotes}>Refresh</button>
+            </div>
+          </div>
+          {notes.length === 0 ? <p style={S.muted}>No collection notes yet.</p> : (
+            <div>{notes.map(n => (
+              <div key={n.noteId} style={S.noteCard}>
+                <div style={{ marginBottom: 8 }}>
+                  {n.collectionNoteNo && <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#2563eb', letterSpacing: 1 }}>COLL NOTE #{n.collectionNoteNo}</p>}
+                  <p style={{margin: '0 0 4px', fontWeight: 600}}>{n.periodStart} to {n.periodEnd}</p>
+                  <p style={S.muted}>{n.pods.length} PODs | {n.pods.reduce((s,p) => s + (p.pallets||0), 0)} pallets | {n.pods.reduce((s,p) => s + (p.totalUnits||0), 0).toFixed(2)} units</p>
+                  <p style={S.muted}>Driver: {n.driverName} | Farm: {n.farmDestination || 'N/A'}</p>
+                  {n.emailStatus && n.emailStatus.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {n.emailStatus.map((es, i) => (
+                        <span key={i} style={{ fontSize: 11, marginRight: 8, padding: '2px 8px', borderRadius: 10, backgroundColor: es.sent ? '#dcfce7' : '#fee2e2', color: es.sent ? '#166534' : '#991b1b' }}>
+                          {es.to}: {es.sent ? 'Sent' : 'Failed'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {n.pods.some(p => p.photo) && (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {n.pods.filter(p => p.photo).map((p, i) => (
+                      <button key={i} style={S.btnSm} onClick={() => setPhotoModal('/' + p.photo)}>Photo {i+1} ({p.gtr})</button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button style={S.btnPrimary} onClick={() => downloadPdf(n.noteId)}>Download PDF</button>
+                  <button style={S.btnSec} onClick={() => { setResendModal(n.noteId); setResendEmail(n.accountantEmail || ''); }}>Resend Email</button>
+                </div>
+              </div>
+            ))}</div>
+          )}
+        </div>
+      )}
+
+      {/* Destruction Certs in History */}
+      {view === 'history' && certs.length > 0 && (
+        <div style={S.card}>
+          <h2 style={S.heading}>Destruction Certificates ({certs.length})</h2>
+          {certs.map(c => (
+            <div key={c.certId} style={{ ...S.noteCard, borderLeft: '4px solid #16a34a' }}>
+              <div style={{ marginBottom: 8 }}>
+                <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#16a34a', letterSpacing: 1 }}>DESTRUCTION CERTIFICATE</p>
+                {c.collectionNoteNo && <p style={{ margin: '0 0 4px', fontWeight: 600 }}>Collection Note #{c.collectionNoteNo}</p>}
+                <p style={S.muted}>Date: {c.destructionDate} | Weight: {c.weightDestroyed} kg | Weighbridge: {c.weighbridgeNo}</p>
+                <p style={S.muted}>{c.tankerCount}x Tank — {c.itemsReceived}</p>
+                <p style={S.muted}>Signed: {c.signerName}</p>
+              </div>
+              <button style={S.btnPrimary} onClick={() => downloadCertPdf(c.certId)}>Download Certificate PDF</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ─── ADMIN: USERS ─── */}
+      {view === 'admin' && user.role === 'admin' && (
+        <div style={S.card}>
+          <h2 style={S.heading}>User Management</h2>
+          <div style={{ ...S.grid2, marginBottom: 16 }}>
+            <div style={S.field}><label style={S.label}>Username</label><input style={S.input} value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Password</label><input style={S.input} type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Role</label>
+              <select style={S.input} value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
+                <option value="crew">Crew</option><option value="admin">Admin</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'end' }}><button style={S.btnPrimary} onClick={addUser}>Add User</button></div>
+          </div>
+          <div style={S.tableWrap}><table style={S.table}>
+            <thead><tr style={S.thead}><th style={S.th}>Username</th><th style={S.th}>Role</th><th style={S.th}>Created</th><th style={S.th}></th></tr></thead>
+            <tbody>{users.map(u => (
+              <tr key={u._id} style={S.tr}>
+                <td style={S.td}>{u.username}</td>
+                <td style={S.td}><span style={{ ...S.badge, backgroundColor: u.role === 'admin' ? '#dbeafe' : '#f3f4f6', color: u.role === 'admin' ? '#1d4ed8' : '#555' }}>{u.role}</span></td>
+                <td style={S.td}>{new Date(u.createdAt).toLocaleDateString()}</td>
+                <td style={S.td}>{u.username !== 'admin' && <button style={S.btnDel} onClick={() => deleteUser(u._id)}>X</button>}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        </div>
+      )}
+
+      {/* ─── PHOTO MODAL ─── */}
+      {photoModal && (
+        <div className="modal-overlay" onClick={() => setPhotoModal(null)}>
+          <div className="photo-modal" onClick={e => e.stopPropagation()}>
+            <img src={photoModal} alt="POD Photo" />
+            <div style={{ textAlign: 'center', marginTop: 12 }}><button style={S.btnSec} onClick={() => setPhotoModal(null)}>Close</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── CHANGE PASSWORD MODAL ─── */}
+      {pwModal && (
+        <div className="modal-overlay" onClick={() => setPwModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={S.heading}>Change Password</h3>
+            <div style={S.field}><label style={S.label}>Current Password</label><input style={S.input} type="password" value={pwForm.currentPassword} onChange={e => setPwForm({...pwForm, currentPassword: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>New Password</label><input style={S.input} type="password" value={pwForm.newPassword} onChange={e => setPwForm({...pwForm, newPassword: e.target.value})} /></div>
+            <div style={S.field}><label style={S.label}>Confirm New Password</label><input style={S.input} type="password" value={pwForm.confirm} onChange={e => setPwForm({...pwForm, confirm: e.target.value})} /></div>
+            <div style={{ ...S.btnRow, marginTop: 16 }}>
+              <button style={S.btnPrimary} onClick={changePassword}>Change Password</button>
+              <button style={S.btnSec} onClick={() => setPwModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── RESEND EMAIL MODAL ─── */}
+      {resendModal && (
+        <div className="modal-overlay" onClick={() => setResendModal(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={S.heading}>Resend Collection Note Email</h3>
+            <div style={S.field}><label style={S.label}>Accountant Email (optional)</label><input style={S.input} type="email" value={resendEmail} onChange={e => setResendEmail(e.target.value)} placeholder="Leave empty to use original" /></div>
+            <div style={{ ...S.btnRow, marginTop: 16 }}>
+              <button style={{ ...S.btnPrimary, opacity: loading ? 0.6 : 1 }} onClick={() => resendEmail_(resendModal)} disabled={loading}>{loading ? 'Sending...' : 'Resend'}</button>
+              <button style={S.btnSec} onClick={() => setResendModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const S = {
+  container: { maxWidth: 1000, margin: '0 auto', padding: 16, fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif', backgroundColor: '#f5f7fa', minHeight: '100vh' },
+  header: { backgroundColor: '#fff', padding: '20px 20px', borderRadius: 12, marginBottom: 16, boxShadow: '0 2px 4px rgba(0,0,0,0.05)' },
+  title: { margin: '0 0 4px', fontSize: 24, color: '#1a1a1a', fontWeight: 700 },
+  subtitle: { margin: 0, fontSize: 13, color: '#666' },
+  nav: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' },
+  navBtn: { flex: 1, minWidth: 90, padding: '10px 8px', border: '1px solid #d1d5db', borderRadius: 8, backgroundColor: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#333' },
+  navActive: { flex: 1, minWidth: 90, padding: '10px 8px', border: '2px solid #2563eb', borderRadius: 8, backgroundColor: '#eff6ff', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#2563eb' },
+  card: { backgroundColor: '#fff', padding: 24, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: 16 },
+  heading: { fontSize: 20, margin: '0 0 16px', color: '#1a1a1a', fontWeight: 600 },
+  sub: { fontSize: 15, margin: '20px 0 12px', color: '#333', fontWeight: 600 },
+  row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 },
+  field: { marginBottom: 8 },
+  label: { display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: '#555' },
+  input: { width: '100%', padding: '9px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' },
+  btnPrimary: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  btnSec: { backgroundColor: '#e5e7eb', color: '#333', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  btnSm: { backgroundColor: '#f3f4f6', color: '#333', border: '1px solid #d1d5db', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 },
+  btnDel: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 },
+  btnEdit: { backgroundColor: '#dbeafe', color: '#2563eb', border: 'none', padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 },
+  btnLink: { background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 13, fontWeight: 600, textDecoration: 'underline', padding: 0 },
+  btnRow: { display: 'flex', gap: 10, marginTop: 24 },
+  tableWrap: { overflowX: 'auto' },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
+  thead: { backgroundColor: '#f3f4f6' },
+  th: { padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: '#333', borderBottom: '2px solid #e5e7eb' },
+  tr: { borderBottom: '1px solid #e5e7eb' },
+  td: { padding: '10px 8px', color: '#555' },
+  muted: { color: '#999', fontSize: 13, margin: 0 },
+  divider: { height: 1, backgroundColor: '#e5e7eb', margin: '20px 0' },
+  totalsBox: { backgroundColor: '#f0f9ff', padding: '10px 14px', borderRadius: 6, borderLeft: '4px solid #2563eb', marginTop: 10, fontSize: 13, fontWeight: 500 },
+  noteCard: { border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 10 },
+  errorBanner: { backgroundColor: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 },
+  successBanner: { backgroundColor: '#dcfce7', color: '#166534', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 500 },
+  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, color: 'inherit' },
+  statCard: { backgroundColor: '#fff', padding: 16, borderRadius: 10, boxShadow: '0 2px 6px rgba(0,0,0,0.06)', textAlign: 'center' },
+  statNum: { fontSize: 28, fontWeight: 700, color: '#2563eb' },
+  statLabel: { fontSize: 11, color: '#888', marginTop: 4, fontWeight: 500 },
+  badge: { padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600 }
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<PODTracker />);
+  

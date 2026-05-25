@@ -15,9 +15,12 @@ function PODTracker() {
 
   // Collection note form
   const [selectedPodIds, setSelectedPodIds] = useState([]);
-  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '' });
+  const [noteForm, setNoteForm] = useState({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', collectionNoteNo: '', farmName: '' });
   const [manifestPhoto, setManifestPhoto] = useState(null);
   const manifestFileRef = useRef(null);
+  const [wasteManifestPhoto, setWasteManifestPhoto] = useState(null); // NEW: Photo for waste manifest
+  const [wastePhotoPreview, setWastePhotoPreview] = useState(null); // NEW: Preview
+  const wastePhotoRef = useRef(null); // NEW: Ref for file input
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -113,6 +116,46 @@ function PODTracker() {
     setSignature(null);
   };
 
+  // NEW: Handle waste manifest photo capture
+  const handleWastePhotoCapture = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        setError('Photo must be less than 10MB');
+        return;
+      }
+      setWasteManifestPhoto(file);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setWastePhotoPreview(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // NEW: Remove waste manifest photo
+  const removeWastePhoto = () => {
+    setWasteManifestPhoto(null);
+    setWastePhotoPreview(null);
+    if (wastePhotoRef.current) wastePhotoRef.current.value = '';
+  };
+
+  // NEW: Retry send for failed delivery notes
+  const handleRetrySend = async (noteId) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/collection-note/${noteId}/retry-send`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to retry send');
+      flash(`${data.message} (Attempt #${data.attempts})`);
+      await loadNotes();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ─── Create Collection Note ─────────────────────────────────
 
   const togglePod = (podId) => {
@@ -140,9 +183,15 @@ function PODTracker() {
       fd.append('periodStart', noteForm.periodStart);
       fd.append('periodEnd', noteForm.periodEnd);
       fd.append('manifestNumber', noteForm.manifestNumber);
+      fd.append('collectionNoteNo', noteForm.collectionNoteNo);
+      fd.append('farmName', noteForm.farmName);
       fd.append('podIds', JSON.stringify(selectedPodIds));
       fd.append('driverSignature', signature);
       fd.append('manifestPhoto', manifestPhoto);
+      // NEW: Add waste manifest photo if selected
+      if (wasteManifestPhoto) {
+        fd.append('wasteManifestPhoto', wasteManifestPhoto);
+      }
 
       const res = await fetch('/api/collection-note', {
         method: 'POST',
@@ -150,13 +199,18 @@ function PODTracker() {
       });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
+      // NEW: Show delivery note number in success message
+      const deliveryNum = data.deliveryNoteNumber ? ` - Delivery Note #${data.deliveryNoteNumber}` : '';
+      flash(`Collection Note created & emailed${deliveryNum}`);
       setSelectedPodIds([]);
-      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '' });
+      setNoteForm({ driverName: '', vehicleInfo: '', farmDestination: '', accountantEmail: '', periodStart: '', periodEnd: '', manifestNumber: '', collectionNoteNo: '', farmName: '' });
       setManifestPhoto(null);
+      setWasteManifestPhoto(null); // NEW: Reset waste photo
+      setWastePhotoPreview(null); // NEW: Clear preview
       if (manifestFileRef.current) manifestFileRef.current.value = '';
+      if (wastePhotoRef.current) wastePhotoRef.current.value = ''; // NEW: Clear waste photo input
       setSignature(null);
       await loadNotes();
-      flash('Collection Note created & emailed!');
       setView('dashboard');
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -317,6 +371,29 @@ function PODTracker() {
             {manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {manifestPhoto.name}</p>}
           </div>
 
+          {/* NEW: Waste Manifest Photo Section */}
+          <div style={{...S.field, marginTop: 16, padding: 16, backgroundColor: '#f0f9ff', borderRadius: 8, border: '2px dashed #0284c7'}}>
+            <label style={S.label}>📷 Waste Manifest Photo (Capacity / Condition Photo)</label>
+            <p style={{...S.muted, marginTop: 8}}>Optional: Upload a photo showing waste manifest, capacity, or condition</p>
+            <input ref={wastePhotoRef} type="file" accept="image/*" capture="environment" style={S.input}
+              onChange={handleWastePhotoCapture} />
+            {wasteManifestPhoto && (
+              <div style={{marginTop: 12}}>
+                <p style={{...S.muted, marginBottom: 8}}>📁 Selected: {wasteManifestPhoto.name}</p>
+                {wastePhotoPreview && (
+                  <div style={{marginTop: 12}}>
+                    <img src={wastePhotoPreview} alt="Waste manifest preview" style={{maxWidth: '100%', maxHeight: 200, borderRadius: 6, border: '1px solid #ddd'}} />
+                    <div style={{marginTop: 8}}>
+                      <button style={{...S.btnSm, backgroundColor: '#dc2626', color: 'white'}} onClick={removeWastePhoto}>
+                        ✕ Remove Photo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div style={S.divider}></div>
           <h3 style={S.sub}>4. Driver Signature</h3>
           <p style={S.muted}>Sign below with your finger or mouse</p>
@@ -350,16 +427,49 @@ function PODTracker() {
               <div key={n.noteId} style={S.noteCard}>
                 <div style={S.row}>
                   <div>
+                    {/* NEW: Show delivery note number */}
+                    {n.deliveryNoteNumber && (
+                      <p style={{margin: '0 0 4px', fontWeight: 700, color: '#2563eb', fontSize: 14}}>
+                        Delivery Note #{n.deliveryNoteNumber}
+                      </p>
+                    )}
                     <p style={{margin: '0 0 4px', fontWeight: 600}}>
                       {n.periodStart} to {n.periodEnd}
                     </p>
                     <p style={S.muted}>
                       {n.pods.length} PODs | Driver: {n.driverName} | Farm: {n.farmDestination || 'N/A'}
                     </p>
+                    {/* NEW: Show send status and attempts */}
+                    {n.sendStatus && (
+                      <p style={{margin: '8px 0 4px', fontSize: 12, fontWeight: 600, color: n.sendStatus === 'sent' ? '#16a34a' : n.sendStatus === 'failed' ? '#dc2626' : '#ea580c'}}>
+                        Status: {n.sendStatus.toUpperCase()}
+                        {n.sendAttempts > 0 && ` (Attempt #${n.sendAttempts})`}
+                      </p>
+                    )}
+                    {/* NEW: Show error if send failed */}
+                    {n.lastSendError && (
+                      <p style={{margin: '8px 0 4px', fontSize: 12, color: '#dc2626', backgroundColor: '#fee2e2', padding: '6px 8px', borderRadius: 4}}>
+                        ⚠️ {n.lastSendError}
+                      </p>
+                    )}
+                    {/* NEW: Show photo indicator */}
+                    {n.wasteManifestPhoto && (
+                      <p style={{margin: '4px 0 0', fontSize: 12, color: '#0284c7'}}>
+                        📷 Waste photo attached
+                      </p>
+                    )}
                   </div>
-                  <button style={S.btnPrimary} onClick={() => window.open(`/api/collection-note/${n.noteId}/pdf`, '_blank')}>
-                    Download PDF
-                  </button>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: 8}}>
+                    <button style={S.btnPrimary} onClick={() => window.open(`/api/collection-note/${n.noteId}/pdf`, '_blank')}>
+                      Download PDF
+                    </button>
+                    {/* NEW: Retry button for failed sends */}
+                    {n.sendStatus === 'failed' && (
+                      <button style={{...S.btnPrimary, backgroundColor: '#ea580c'}} onClick={() => handleRetrySend(n.noteId)} disabled={loading}>
+                        {loading ? '⏳ Retrying...' : '🔄 Retry Send'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}</div>
