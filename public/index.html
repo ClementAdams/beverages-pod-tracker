@@ -643,7 +643,7 @@ function MainApp({ user, onLogout }) {
           {dupWarning && <div style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '10px 14px', borderRadius: 8, marginTop: 12, fontSize: 13, fontWeight: 500 }}>{dupWarning}</div>}
           <div style={{...S.field, marginTop: 16}}>
             <label style={S.label}>Photo of POD Document</label>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setPodPhoto(e.target.files[0] || null)} />
+            <input ref={fileRef} type="file" accept="image/*" style={S.input} onChange={e => setPodPhoto(e.target.files[0] || null)} />
             {podPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {podPhoto.name}</p>}
           </div>
           <div style={S.btnRow}>
@@ -696,7 +696,7 @@ function MainApp({ user, onLogout }) {
           <h3 style={S.sub}>3. Waste Collection Manifest</h3>
           <div style={S.grid2}>
             <div style={S.field}><label style={S.label}>Manifest Number *</label><input style={S.input} placeholder="e.g. WCM-2026-001" value={noteForm.manifestNumber} onChange={e => setNoteForm({...noteForm, manifestNumber: e.target.value})} /></div>
-            <div style={S.field}><label style={S.label}>Manifest Photo *</label><input ref={manifestPhotoRef} type="file" accept="image/*" capture="environment" style={S.input} onChange={e => setNoteForm({...noteForm, manifestPhoto: e.target.files[0] || null})} />{noteForm.manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {noteForm.manifestPhoto.name}</p>}</div>
+            <div style={S.field}><label style={S.label}>Manifest Photo *</label><input ref={manifestPhotoRef} type="file" accept="image/*" style={S.input} onChange={e => setNoteForm({...noteForm, manifestPhoto: e.target.files[0] || null})} />{noteForm.manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {noteForm.manifestPhoto.name}</p>}</div>
           </div>
           <div style={S.divider}></div>
           <h3 style={S.sub}>4. Driver Signature</h3>
