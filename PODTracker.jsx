@@ -290,7 +290,7 @@ function PODTracker() {
 
           <div style={{...S.field, marginTop: 16}}>
             <label style={S.label}>Photo of POD Document</label>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={S.input}
+            <input ref={fileRef} type="file" accept="image/*" style={S.input}
               onChange={e => setPodPhoto(e.target.files[0] || null)} />
             {podPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {podPhoto.name}</p>}
           </div>
@@ -366,7 +366,7 @@ function PODTracker() {
           </div>
           <div style={{...S.field, marginTop: 16}}>
             <label style={S.label}>Manifest Photo *</label>
-            <input ref={manifestFileRef} type="file" accept="image/*" capture="environment" style={S.input}
+            <input ref={manifestFileRef} type="file" accept="image/*" style={S.input}
               onChange={e => setManifestPhoto(e.target.files[0] || null)} />
             {manifestPhoto && <p style={{...S.muted, marginTop: 4}}>Selected: {manifestPhoto.name}</p>}
           </div>
@@ -375,7 +375,7 @@ function PODTracker() {
           <div style={{...S.field, marginTop: 16, padding: 16, backgroundColor: '#f0f9ff', borderRadius: 8, border: '2px dashed #0284c7'}}>
             <label style={S.label}>📷 Waste Manifest Photo (Capacity / Condition Photo)</label>
             <p style={{...S.muted, marginTop: 8}}>Optional: Upload a photo showing waste manifest, capacity, or condition</p>
-            <input ref={wastePhotoRef} type="file" accept="image/*" capture="environment" style={S.input}
+            <input ref={wastePhotoRef} type="file" accept="image/*" style={S.input}
               onChange={handleWastePhotoCapture} />
             {wasteManifestPhoto && (
               <div style={{marginTop: 12}}>
