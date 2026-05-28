@@ -550,7 +550,10 @@ app.delete('/api/pod/:podId', auth, async (req, res) => {
 });
 
 // Create collection note from selected PODs
-app.post('/api/collection-note', auth, upload.single('wasteManifestPhoto'), async (req, res) => {
+app.post('/api/collection-note', auth, upload.fields([
+  { name: 'manifestPhoto', maxCount: 1 },
+  { name: 'wasteManifestPhoto', maxCount: 1 }
+]), async (req, res) => {
   try {
     const podIds = JSON.parse(req.body.podIds || '[]');
     const { driverName, vehicleInfo, farmDestination, accountantEmail,
@@ -558,30 +561,32 @@ app.post('/api/collection-note', auth, upload.single('wasteManifestPhoto'), asyn
     const selectedPods = await Pod.find({ podId: { $in: podIds } }).lean();
     if (selectedPods.length === 0) return res.status(400).json({ error: 'No PODs selected' });
 
-    // NEW: Get next delivery note number
     const deliveryNoteNumber = await getNextDeliveryNoteNumber();
 
+    // Accept manifestPhoto under either field name
+    const manifestFile = (req.files?.manifestPhoto?.[0]) || (req.files?.wasteManifestPhoto?.[0]);
+
     const note = await Note.create({
-      deliveryNoteNumber, // NEW: Add sequential number starting at 65
-      pods: selectedPods, 
-      driverName, 
-      vehicleInfo, 
+      deliveryNoteNumber,
+      pods: selectedPods,
+      driverName,
+      vehicleInfo,
       farmDestination,
-      accountantEmail, 
-      manifestNumber, 
-      driverSignature, 
-      periodStart, 
-      periodEnd, 
-      collectionNoteNo, 
+      accountantEmail,
+      manifestNumber,
+      manifestPhoto: manifestFile ? `uploads/${manifestFile.filename}` : null,
+      driverSignature,
+      periodStart,
+      periodEnd,
+      collectionNoteNo,
       farmName,
-      wasteManifestPhoto: req.file ? `uploads/${req.file.filename}` : null, // NEW: Waste manifest photo
-      sendStatus: 'pending', // NEW: Track send status
-      sendAttempts: 0 // NEW: Initialize send attempts
+      sendStatus: 'pending',
+      sendAttempts: 0
     });
 
     await Pod.updateMany({ podId: { $in: podIds } }, { archived: true, collectionNoteId: note.noteId });
 
-    res.json({ success: true, noteId: note.noteId, deliveryNoteNumber }); // NEW: Return delivery note number
+    res.json({ success: true, noteId: note.noteId, deliveryNoteNumber });
 
     setTimeout(async () => {
       try {
