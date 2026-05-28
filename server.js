@@ -594,6 +594,12 @@ app.post('/api/collection-note', auth, upload.single('wasteManifestPhoto'), asyn
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
+// Return the next collection note number from the database
+app.get('/api/next-note-number', auth, async (req, res) => {
+  const num = await getNextDeliveryNoteNumber();
+  res.json({ next: num });
+});
+
 app.get('/api/collection-notes', auth, async (req, res) => {
   const notes = await Note.find().sort({ createdDate: -1 }).lean();
   res.json(notes);

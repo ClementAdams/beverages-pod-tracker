@@ -276,7 +276,7 @@ function MainApp({ user, onLogout }) {
   const [signature, setSignature] = useState(null);
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
-  const [nextNoteSeq, setNextNoteSeq] = useState(() => parseInt(localStorage.getItem('nextNoteSeq') || '64'));
+  const [nextNoteSeq, setNextNoteSeq] = useState(null);
 
   // Destruction certificate form
   const emptyCert = { collectionNoteNo: '', tankerCount: '', itemsReceived: '', destructionDate: new Date().toISOString().split('T')[0], weighbridgeNo: '', weightDestroyed: '', signerName: 'J.C.F. Beukes' };
@@ -309,13 +309,14 @@ function MainApp({ user, onLogout }) {
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
   }, []);
 
-  useEffect(() => { loadPods(); loadNotes(); loadCerts(); loadStats(); }, []);
+  useEffect(() => { loadPods(); loadNotes(); loadCerts(); loadStats(); loadNextNoteNum(); }, []);
 
   const loadPods = () => api('/api/pods').then(r => r.json()).then(setPods).catch(() => {});
   const loadArchivedPods = () => api('/api/pods?archived=true').then(r => r.json()).then(setPods).catch(() => {});
   const loadNotes = () => api('/api/collection-notes').then(r => r.json()).then(setNotes).catch(() => {});
   const loadCerts = () => api('/api/destruction-certs').then(r => r.json()).then(setCerts).catch(() => {});
   const loadStats = () => api('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
+  const loadNextNoteNum = () => api('/api/next-note-number').then(r => r.json()).then(d => setNextNoteSeq(d.next)).catch(() => setNextNoteSeq(65));
   const loadUsers = () => api('/api/users').then(r => r.json()).then(setUsers).catch(() => {});
   const flash = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); };
 
@@ -475,14 +476,11 @@ function MainApp({ user, onLogout }) {
       fd.append('farmName', noteForm.farmDestination);
       const res = await api('/api/collection-note', { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Failed');
-      const newSeq = nextNoteSeq + 1;
-      setNextNoteSeq(newSeq);
-      localStorage.setItem('nextNoteSeq', newSeq.toString());
       setSelectedPodIds([]);
       setNoteForm(emptyNote);
       setSignature(null);
       if (manifestPhotoRef.current) manifestPhotoRef.current.value = '';
-      await loadPods(); await loadNotes(); loadStats();
+      await loadPods(); await loadNotes(); loadStats(); loadNextNoteNum();
       flash('Collection Note #' + collectionNoteNo + ' created! PODs archived.');
       setView('dashboard');
     } catch (e) { setError(e.message); }
@@ -659,7 +657,7 @@ function MainApp({ user, onLogout }) {
         <div style={S.card}>
           <h2 style={S.heading}>Collection Note</h2>
           <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
-            <p style={{ fontSize: 13, color: '#1d4ed8', fontWeight: 600, margin: 0 }}>Next Collection Note #: {nextNoteSeq}</p>
+            <p style={{ fontSize: 13, color: '#1d4ed8', fontWeight: 600, margin: 0 }}>Next Collection Note #: {nextNoteSeq !== null ? nextNoteSeq : '...'}</p>
           </div>
           <h3 style={S.sub}>1. Select PODs to include</h3>
           {pods.length === 0 ? <p style={S.muted}>No PODs logged. Log some PODs first.</p> : (
